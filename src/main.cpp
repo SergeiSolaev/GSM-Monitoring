@@ -26,7 +26,6 @@ void (*resetFunc)(void) = 0;
 // ==========================================
 // 2. КОНСТАНТЫ И ПИНЫ
 // ==========================================
-const int PIN_ONEWIRE = 4; // Пин шины данных датчиков температуры
 const int PIN_DTR = 5;     // Пин управления режимом сна SIM800L (DTR)
 const int PIN_LED = A1;    // Пин светодиода индикации сброса
 const int PIN_BTN_RST = 3; // Пин кнопки пробуждения/сброса (с внешним подтягивающим резистором)
@@ -38,10 +37,10 @@ const int IDX_SENSOR_HOME = 1;    // Домашний датчик
 const int IDX_SENSOR_BOILER = 2;  // Датчик котла
 
 // Пороговые значения температур для аварийных условий
-const int TEMP_BOILER_MIN = 10;   // Минимальная температура котла (°C)
-const int TEMP_BOILER_MAX = 50;   // Максимальная температура котла (°C)
-const int TEMP_HOME_MIN = 5;      // Минимальная температура в доме (°C)
-const int TEMP_HOME_MAX = 30;     // Максимальная температура в доме (°C)
+const float TEMP_BOILER_MIN = 10.0;   // Минимальная температура котла (°C)
+const float TEMP_BOILER_MAX = 50.0;   // Максимальная температура котла (°C)
+const float TEMP_HOME_MIN = 5.0;      // Минимальная температура в доме (°C)
+const float TEMP_HOME_MAX = 30.0;     // Максимальная температура в доме (°C)
 
 // Таймеры и интервалы (в миллисекундах)
 const unsigned long INTERVAL_DAILY = 41546016UL;  // Интервал планового отчёта (~12 часов с коррекцией)
@@ -95,8 +94,8 @@ void setup()
   // Watchdog.enable(RESET_MODE, WDT_PRESCALER_512); // Режим сторжевого сброса , таймаут ~4с
   power.autoCalibrate();         // каллибровка WDT
   power.setSleepMode(ADC_SLEEP); // наиболее глубокий сон, отключается всё кроме WDT и внешних прерываний, просыпается от аппаратных (обычных + PCINT) или WDT за 1000 тактов (62 мкс)
-  pinMode(3, INPUT_PULLUP);
-  pinMode(A1, OUTPUT);
+  pinMode(PIN_BTN_RST, INPUT_PULLUP);
+  pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_DTR, OUTPUT);
   attachInterrupt(1, button_reset, FALLING);
   sensors.begin();        // включаем датчики температуры

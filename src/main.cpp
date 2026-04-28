@@ -75,24 +75,24 @@ String msg = "";                     // Исходящее сообщение
 // ==========================================
 // 5. ФЛАГИ СОСТОЯНИЯ СИСТЕМЫ
 // ==========================================
-boolean systemWorking = false;     // Разрешение работы циклов daily() и alarm()
+boolean systemWorking = false;    // Разрешение работы циклов daily() и alarm()
 volatile boolean btnFlag = false; // Флаг нажатия кнопки (обработчик прерывания)
 
 // ==========================================
 // 6. ПРОТОТИПЫ ФУНКЦИЙ
 // ==========================================
-void button_reset();      // Обработчик внешнего прерывания по кнопке сброса
-void daily();             // Отправка планового отчёта каждые ~12 часов
-void alarm();             // Мониторинг аварийных температур, отправка SMS + авто-звонок
-void receivingSMS();      // Приём, парсинг и обработка входящих SMS-команд
-void sendSMS(const String& msg); // Отправка SMS
-void clearBuffer();       // Полная очистка буфера программного UART
-void updateSerial();      // Прозрачный проброс данных между HardwareSerial и SoftwareSerial (для отладки)
-void wakeSIM800L();       // Выключаем энергосбережение SIM800L
-void sleepSIM800L();      // Включаем энергосбережение SIM800L
-void deleteAllSMS();      // Удаление всех смс
-void constructMessage();  // Конструктор сообщения
-void getBatLevel();       // Получение уровня заряда батареи
+void button_reset();             // Обработчик внешнего прерывания по кнопке сброса
+void daily();                    // Отправка планового отчёта каждые ~12 часов
+void alarm();                    // Мониторинг аварийных температур, отправка SMS + авто-звонок
+void receivingSMS();             // Приём, парсинг и обработка входящих SMS-команд
+void sendSMS(const String &msg); // Отправка SMS
+void clearBuffer();              // Полная очистка буфера программного UART
+void updateSerial();             // Прозрачный проброс данных между HardwareSerial и SoftwareSerial (для отладки)
+void wakeSIM800L();              // Выключаем энергосбережение SIM800L
+void sleepSIM800L();             // Включаем энергосбережение SIM800L
+void deleteAllSMS();             // Удаление всех смс
+void constructMessage();         // Конструктор сообщения
+void getBatLevel();              // Получение уровня заряда батареи
 
 void setup()
 
@@ -118,6 +118,7 @@ void setup()
   SerialSIM800L.println("AT+CSCLK=1"); // включаем возможность работы энергосбеирежения
   delay(DELAY_AT_COMMAND);
   sleepSIM800L();
+  //Serial.begin(9600); // Для отладки по монитору порта
 }
 
 void button_reset()
@@ -141,7 +142,8 @@ void loop()
     sleepSIM800L();
     btnFlag = 0;
     digitalWrite(PIN_LED, LOW);
-    resetFunc();  // При нажатии кнопки даёт точку отсчёта времени для выполнения daily();
+    resetFunc(); // При нажатии кнопки даёт точку отсчёта времени для выполнения daily();
+    //updateSerial(); // Для отладки по монитору порта
   }
 
   if (systemWorking == true)
@@ -149,9 +151,9 @@ void loop()
     daily(); // 12 часовое оповещение
     alarm(); // сигнализация, опрос раз в 1 минуту
   }
-  receivingSMS();          // обработка входящих СМС
+  receivingSMS(); // обработка входящих СМС
   power.sleepDelay(10000); // спим 10 секунд
-  //  Watchdog.reset(); // Переодический сброс watchdog, означающий, что устройство не зависло
+  // Watchdog.reset(); // Переодический сброс watchdog, означающий, что устройство не зависло
 }
 
 void daily()
@@ -206,7 +208,7 @@ void receivingSMS()
 {
 
   if (millis() - timerSMS >= INTERVAL_SMS_POLL)
-  { // установка времени 1 минута
+  {
     timerSMS += INTERVAL_SMS_POLL;
     if (SerialSIM800L.available())
     {                                         // проверка информации в буфере
@@ -214,7 +216,7 @@ void receivingSMS()
       smsBuffer.replace("\n", "");            // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
       smsBuffer.trim();                       // удаляем пробелы вначале и вконце строки
       if (smsBuffer.endsWith("Info"))
-      { // если строка заканчивается на "GetInfo", то
+      { // если строка заканчивается на "Info", то
         wakeSIM800L();
         SerialSIM800L.println("AT+CBC"); // запрос состояния батареи
         delay(DELAY_AT_COMMAND);         // пауза для обработки модулем АТ-комнады
@@ -337,7 +339,7 @@ void constructMessage()
   msg += "%";
 }
 
-void sendSMS(const String& msg)
+void sendSMS(const String &msg)
 {
   SerialSIM800L.print("AT+CMGS=\"");
   SerialSIM800L.print(PHONE_NUMBER);
@@ -351,7 +353,7 @@ void sendSMS(const String& msg)
 
 void updateSerial()
 {
-  delay(500); // пауза 500 мс
+  // delay(500); // пауза 500 мс
   while (Serial.available())
   {
     SerialSIM800L.write(Serial.read()); // переадресация с последовательного порта SIM800L на последовательный порт Arduino IDE

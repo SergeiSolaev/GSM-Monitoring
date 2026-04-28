@@ -91,8 +91,13 @@ void updateSerial();             // Прозрачный проброс данн
 void wakeSIM800L();              // Выключаем энергосбережение SIM800L
 void sleepSIM800L();             // Включаем энергосбережение SIM800L
 void deleteAllSMS();             // Удаление всех смс
-void constructMessage();         // Конструктор сообщения
+void constructInfoMessage();     // Конструктор информационного сообщения
+void constructAlarmMessage();    // Конструктор предупредительного сообщения
 void getBatLevel();              // Получение уровня заряда батареи
+void handleInfoCommand();        // Обработчик команды Info
+void handleStartCommand();       // Обработчик команды Start
+void handleStopCommand();        // Обработчик команды Stop
+void makeCall();                 // Совершить звонок
 
 void setup()
 
@@ -106,7 +111,6 @@ void setup()
   pinMode(PIN_BTN_RST, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_DTR, OUTPUT);
-  attachInterrupt(1, button_reset, FALLING);
   sensors.begin();             // включаем датчики температуры
   SerialSIM800L.begin(9600);   // настройка скорости обмена данными с SIM800L
   SerialSIM800L.println("AT"); // установка соединения с SIM800L
@@ -118,7 +122,9 @@ void setup()
   SerialSIM800L.println("AT+CSCLK=1"); // включаем возможность работы энергосбеирежения
   delay(DELAY_AT_COMMAND);
   sleepSIM800L();
-  //Serial.begin(9600); // Для отладки по монитору порта
+  delay(2000); // Задержка для стабилизации входов, что-бы не срабатывало ложное прерывание
+  attachInterrupt(1, button_reset, FALLING);
+  // Serial.begin(9600); // Для отладки по монитору порта
 }
 
 void button_reset()
@@ -136,14 +142,14 @@ void loop()
     sensors.requestTemperatures();
     wakeSIM800L();
     getBatLevel();
-    constructMessage();
+    constructInfoMessage();
     sendSMS(msg);
     deleteAllSMS();
     sleepSIM800L();
     btnFlag = 0;
     digitalWrite(PIN_LED, LOW);
     resetFunc(); // При нажатии кнопки даёт точку отсчёта времени для выполнения daily();
-    //updateSerial(); // Для отладки по монитору порта
+    // updateSerial(); // Для отладки по монитору порта
   }
 
   if (systemWorking == true)
@@ -151,7 +157,7 @@ void loop()
     daily(); // 12 часовое оповещение
     alarm(); // сигнализация, опрос раз в 1 минуту
   }
-  receivingSMS(); // обработка входящих СМС
+  receivingSMS();          // обработка входящих СМС
   power.sleepDelay(10000); // спим 10 секунд
   // Watchdog.reset(); // Переодический сброс watchdog, означающий, что устройство не зависло
 }
@@ -165,7 +171,7 @@ void daily()
     sensors.requestTemperatures();
     wakeSIM800L();
     getBatLevel();
-    constructMessage();
+    constructInfoMessage();
     sendSMS(msg);
     deleteAllSMS();
     sleepSIM800L();
@@ -174,34 +180,32 @@ void daily()
 
 void alarm()
 {
-
   if (millis() - timerAlarm >= INTERVAL_ALARM)
-  {                                // установка времени 1 минута
-    timerAlarm += INTERVAL_ALARM;  // сброс таймера
-    sensors.requestTemperatures(); // запрос температуры
-
+  {
+    timerAlarm += INTERVAL_ALARM;
+    sensors.requestTemperatures();
+    // Проверка выхода температуры за диапазон аварийных значений
     if (sensors.getTempCByIndex(IDX_SENSOR_BOILER) <= TEMP_BOILER_MIN || sensors.getTempCByIndex(IDX_SENSOR_BOILER) >= TEMP_BOILER_MAX || sensors.getTempCByIndex(IDX_SENSOR_HOME) <= TEMP_HOME_MIN || sensors.getTempCByIndex(IDX_SENSOR_HOME) >= TEMP_HOME_MAX)
-    { // boiler temp & home temp
+    {
       wakeSIM800L();
-      SerialSIM800L.print("AT+CMGS=\"");
-      SerialSIM800L.print(PHONE_NUMBER);
-      SerialSIM800L.println("\"");
-      clearBuffer();
-      SerialSIM800L.println(txtWarning + txtBoiler + sensors.getTempCByIndex(IDX_SENSOR_BOILER) + txtHome + sensors.getTempCByIndex(IDX_SENSOR_HOME)); // текст SMS
-      clearBuffer();
-      SerialSIM800L.write(26);
-      delay(DELAY_AFTER_SMS_SEND);
-      clearBuffer();
+      constructAlarmMessage();
+      sendSMS(msg);
       deleteAllSMS();
-      SerialSIM800L.print("ATD"); // Звоним
-      SerialSIM800L.print(PHONE_NUMBER);
-      SerialSIM800L.println(";");
-      delay(DELAY_CALL_DURATION);
-      SerialSIM800L.println("ATH"); // кладём трубку
+      makeCall();
       clearBuffer();
       sleepSIM800L();
     }
   }
+}
+
+void makeCall()
+{
+  delay(1000);
+  SerialSIM800L.print("ATD"); // Звоним
+  SerialSIM800L.print(PHONE_NUMBER);
+  SerialSIM800L.println(";");
+  delay(DELAY_CALL_DURATION);
+  SerialSIM800L.println("ATH"); // кладём трубку
 }
 
 void receivingSMS()
@@ -211,75 +215,61 @@ void receivingSMS()
   {
     timerSMS += INTERVAL_SMS_POLL;
     if (SerialSIM800L.available())
-    {                                         // проверка информации в буфере
+    {
       smsBuffer = SerialSIM800L.readString(); // чтение ответа от модуля в переменную smsBuffer
       smsBuffer.replace("\n", "");            // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
       smsBuffer.trim();                       // удаляем пробелы вначале и вконце строки
-      if (smsBuffer.endsWith("Info"))
-      { // если строка заканчивается на "Info", то
-        wakeSIM800L();
-        SerialSIM800L.println("AT+CBC"); // запрос состояния батареи
-        delay(DELAY_AT_COMMAND);         // пауза для обработки модулем АТ-комнады
-        if (SerialSIM800L.available())
-        {                                        // проверка информации в буфере
-          batLevel = SerialSIM800L.readString(); // чтение ответа от модуля в переменную batLevel
-        }
-        batLevel.replace("\n", ""); // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
-        clearBuffer();
-        SerialSIM800L.print("AT+CMGS=\"");
-        SerialSIM800L.print(PHONE_NUMBER);
-        SerialSIM800L.println("\"");
-        clearBuffer();
-        SerialSIM800L.println(txtAmbient + sensors.getTempCByIndex(IDX_SENSOR_AMBIENT) + txtHome + sensors.getTempCByIndex(IDX_SENSOR_HOME) + txtBoiler + sensors.getTempCByIndex(IDX_SENSOR_BOILER) + txtBat + batLevel.substring(16, 18) + " %"); // текст SMS
-        clearBuffer();
-        SerialSIM800L.write(26);
-        clearBuffer();
-        deleteAllSMS();
-        smsBuffer = ""; // присваиваем переменной первоначальное пустое значение
-        sleepSIM800L();
-      }
-      if (smsBuffer.endsWith("Stop"))
-      { // если строка заканчивается на "Stop", то
-        systemWorking = false;
-        wakeSIM800L();
-        SerialSIM800L.print("AT+CMGS=\"");
-        SerialSIM800L.print(PHONE_NUMBER);
-        SerialSIM800L.println("\"");
-        clearBuffer();
-        SerialSIM800L.println("Stop OK"); // текст SMS
-        clearBuffer();
-        SerialSIM800L.write(26);
-        clearBuffer();
-        deleteAllSMS();
-        smsBuffer = ""; // присваиваем переменной первоначальное пустое значение
-        sleepSIM800L();
-      }
-      if (smsBuffer.endsWith("Start"))
-      { // если строка заканчивается на "Start", то
-        systemWorking = true;
-        wakeSIM800L();
-        SerialSIM800L.print("AT+CMGS=\"");
-        SerialSIM800L.print(PHONE_NUMBER);
-        SerialSIM800L.println("\"");
-        clearBuffer();
-        SerialSIM800L.println("Start OK"); // текст SMS
-        clearBuffer();
-        SerialSIM800L.write(26);
-        clearBuffer();
-        deleteAllSMS();
-        smsBuffer = ""; // присваиваем переменной первоначальное пустое значение
-        sleepSIM800L();
-      }
 
-      if (smsBuffer.startsWith("+CMT:"))
-      { // если строка начинается на "+CMT:", то
-        wakeSIM800L();
-        deleteAllSMS();
-        smsBuffer = ""; // присваиваем переменной первоначальное пустое значение
-        sleepSIM800L();
+      // Маршрутизация команд
+      if (smsBuffer.endsWith("Info"))
+      {
+        handleInfoCommand();
       }
+      else if (smsBuffer.endsWith("Start"))
+      {
+        handleStartCommand();
+      }
+      else if (smsBuffer.endsWith("Stop"))
+      {
+        handleStopCommand();
+      }
+      else
+      {
+        // Неизвестная команда: просто очищаем память SIM
+        deleteAllSMS();
+      }
+      smsBuffer = ""; // Сброс буфера после обработки
     }
   }
+}
+
+void handleInfoCommand()
+{
+  sensors.requestTemperatures();
+  wakeSIM800L();
+  getBatLevel();
+  constructInfoMessage();
+  sendSMS(msg);
+  deleteAllSMS();
+  sleepSIM800L();
+}
+
+void handleStartCommand()
+{
+  systemWorking = true;
+  wakeSIM800L();
+  sendSMS("Start OK");
+  deleteAllSMS();
+  sleepSIM800L();
+}
+
+void handleStopCommand()
+{
+  systemWorking = false;
+  wakeSIM800L();
+  sendSMS("Stop OK");
+  deleteAllSMS();
+  sleepSIM800L();
 }
 
 void wakeSIM800L()
@@ -303,7 +293,7 @@ void deleteAllSMS()
 
 void clearBuffer()
 {
-  delay(30);
+  delay(200);
   while (SerialSIM800L.available())
   {
     SerialSIM800L.read();
@@ -322,7 +312,7 @@ void getBatLevel()
   clearBuffer();
 }
 
-void constructMessage()
+void constructInfoMessage()
 {
   msg = "";
   msg += txtAmbient;
@@ -337,6 +327,18 @@ void constructMessage()
   msg += txtBat;
   msg += batLevel.substring(16, 18);
   msg += "%";
+}
+
+void constructAlarmMessage()
+{
+  msg = "";
+  msg += txtWarning;
+
+  msg += txtHome;
+  msg += sensors.getTempCByIndex(IDX_SENSOR_HOME);
+
+  msg += txtBoiler;
+  msg += sensors.getTempCByIndex(IDX_SENSOR_BOILER);
 }
 
 void sendSMS(const String &msg)

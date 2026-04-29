@@ -41,12 +41,13 @@ const float TEMP_HOME_MAX = 30.0;   // Максимальная температ
 const unsigned long INTERVAL_DAILY = 41546016UL; // Интервал планового отчёта (~12 часов с коррекцией)
 const unsigned long INTERVAL_ALARM = 60000UL;    // Интервал проверки аварийных условий (1 минута)
 const unsigned long INTERVAL_SMS_POLL = 10000UL; // Интервал опроса входящих SMS (10 секунд)
+const unsigned long ALARM_COOLDOWN = 300000UL;  // Период "охлаждения" повторных алармов (5 минут)
 
 // Задержки (в миллисекундах)
-const unsigned long DELAY_AT_COMMAND = 100;       // Задержка после AT-команды
+const unsigned long DELAY_AT_COMMAND = 1000;       // Задержка после AT-команды
 const unsigned long DELAY_LED_ON = 2000;          // Задержка включения светодиода при сбросе
 const unsigned long DELAY_AFTER_SMS_SEND = 15000; // Задержка после отправки SMS перед звонком
-const unsigned long DELAY_CALL_DURATION = 10000;  // Длительность звонка
+const unsigned long DELAY_CALL_DURATION = 30000;  // Длительность звонка
 
 // ==========================================
 // 3. ТАЙМЕРЫ (ОТСЧЁТ ВРЕМЕНИ)
@@ -77,8 +78,12 @@ String msg = "";                     // Исходящее сообщение
 // ==========================================
 // 6. ФЛАГИ СОСТОЯНИЯ СИСТЕМЫ
 // ==========================================
-boolean systemWorking = false;    // Разрешение работы циклов daily() и alarm()
-volatile boolean btnFlag = false; // Флаг нажатия кнопки (обработчик прерывания)
+boolean systemWorking = false;       // Разрешение работы циклов daily() и alarm()
+volatile boolean btnFlag = false;    // Флаг нажатия кнопки (обработчик прерывания)
+bool boilerAlarmState = false;       // Флаг текущей аварии котла
+bool homeAlarmState = false;         // Флаг текущей аварии дома
+unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки последнего тревожного сообщения
+                                                  // Инициализация = ALARM_COOLDOWN позволяет первому аларму сработать сразу
 
 // ==========================================
 // 7. ПРОТОТИПЫ ФУНКЦИЙ
@@ -100,7 +105,7 @@ void handleInfoCommand();        // Обработчик команды Info
 void handleStartCommand();       // Обработчик команды Start
 void handleStopCommand();        // Обработчик команды Stop
 void makeCall();                 // Совершить звонок
-void getAllTemperature();
+void getAllTemperature();        // Опрос датчиков температуры
 
 void setup()
 
@@ -187,9 +192,34 @@ void alarm()
   {
     getAllTemperature();
     timerAlarm += INTERVAL_ALARM;
-    // Проверка выхода температуры за диапазон аварийных значений
-    if (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX || tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX)
+
+    // Определяем текущее состояние датчиков
+    bool boilerFault = (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX);
+    bool homeFault = (tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX);
+
+    // Логика перехода в состояние аварии
+    if (boilerFault)
     {
+      boilerAlarmState = true;
+    }
+    else if (!boilerFault)
+    {
+      boilerAlarmState = false;
+    }
+
+    if (homeFault)
+    {
+      homeAlarmState = true;
+    }
+    else if (!homeFault)
+    {
+      homeAlarmState = false;
+    }
+
+    // Отправляем оповещение ТОЛЬКО при смене состояния + соблюдении кулдауна
+    if ((homeAlarmState || boilerAlarmState) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
+    {
+      lastAlarmSentTime = millis();
       wakeSIM800L();
       constructAlarmMessage();
       sendSMS(msg);
@@ -209,6 +239,7 @@ void makeCall()
   SerialSIM800L.println(";");
   delay(DELAY_CALL_DURATION);
   SerialSIM800L.println("ATH"); // кладём трубку
+  delay(DELAY_AT_COMMAND);
 }
 
 void receivingSMS()
@@ -238,7 +269,7 @@ void receivingSMS()
       }
       else
       {
-        // Неизвестная команда: просто очищаем память SIM
+        // Неизвестная команда: просто очищаем память SIM800
         deleteAllSMS();
       }
       smsBuffer = ""; // Сброс буфера после обработки
@@ -249,6 +280,7 @@ void receivingSMS()
 void handleInfoCommand()
 {
   wakeSIM800L();
+  getAllTemperature();
   getBatLevel();
   constructInfoMessage();
   sendSMS(msg);
@@ -277,8 +309,9 @@ void handleStopCommand()
 void wakeSIM800L()
 {
   digitalWrite(PIN_DTR, LOW); // выключаем энергосбережение SIM800L
-  delay(100);
+  delay(1000);
   SerialSIM800L.println("AT"); // установка соединения с SIM800L
+  delay(DELAY_AT_COMMAND);
   clearBuffer();
 }
 
@@ -289,7 +322,8 @@ void sleepSIM800L()
 
 void deleteAllSMS()
 {
-  SerialSIM800L.println("AT+CMGDA=\"DEL ALL\"");
+  SerialSIM800L.println("AT+CMGDA=\"DEL ALL\"");\
+  delay(DELAY_AT_COMMAND);
   clearBuffer();
 }
 
@@ -344,11 +378,16 @@ void constructAlarmMessage()
   msg = "";
   msg += txtWarning;
 
-  msg += txtHome;
-  msg += tHome;
-
-  msg += txtBoiler;
-  msg += tBoiler;
+  if (boilerAlarmState)
+  {
+    msg += txtBoiler;
+    msg += tBoiler;
+  }
+  if (homeAlarmState)
+  {
+    msg += txtHome;
+    msg += tHome;
+  }
 }
 
 void sendSMS(const String &msg)
@@ -356,10 +395,11 @@ void sendSMS(const String &msg)
   SerialSIM800L.print("AT+CMGS=\"");
   SerialSIM800L.print(PHONE_NUMBER);
   SerialSIM800L.println("\"");
-  clearBuffer();
+  delay(DELAY_AT_COMMAND);
   SerialSIM800L.println(msg);
-  clearBuffer();
+  delay(DELAY_AT_COMMAND);
   SerialSIM800L.write(26);
+  delay(DELAY_AFTER_SMS_SEND);
   clearBuffer();
 }
 

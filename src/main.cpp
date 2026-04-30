@@ -26,9 +26,9 @@ void (*resetFunc)(void) = 0;
 // ==========================================
 // 2. КОНСТАНТЫ И ПИНЫ
 // ==========================================
-const int PIN_DTR = 5;     // Пин управления режимом сна SIM800L (DTR)
-const int PIN_LED = A1;    // Пин светодиода индикации сброса
-const int PIN_BTN_RST = 3; // Пин кнопки пробуждения/сброса (с внешним подтягивающим резистором)
+const int PIN_DTR = 5;  // Пин управления режимом сна SIM800L (DTR)
+const int PIN_LED = A1; // Пин светодиода индикации сброса
+
 const char PHONE_NUMBER[] = "+79277749863";
 
 // Пороговые значения температур для аварийных условий
@@ -41,10 +41,10 @@ const float TEMP_HOME_MAX = 30.0;   // Максимальная температ
 const unsigned long INTERVAL_DAILY = 41546016UL; // Интервал планового отчёта (~12 часов с коррекцией)
 const unsigned long INTERVAL_ALARM = 60000UL;    // Интервал проверки аварийных условий (1 минута)
 const unsigned long INTERVAL_SMS_POLL = 10000UL; // Интервал опроса входящих SMS (10 секунд)
-const unsigned long ALARM_COOLDOWN = 300000UL;  // Период "охлаждения" повторных алармов (5 минут)
+const unsigned long ALARM_COOLDOWN = 300000UL;   // Период "охлаждения" повторных алармов (5 минут)
 
 // Задержки (в миллисекундах)
-const unsigned long DELAY_AT_COMMAND = 1000;       // Задержка после AT-команды
+const unsigned long DELAY_AT_COMMAND = 2000;      // Задержка после AT-команды
 const unsigned long DELAY_LED_ON = 2000;          // Задержка включения светодиода при сбросе
 const unsigned long DELAY_AFTER_SMS_SEND = 15000; // Задержка после отправки SMS перед звонком
 const unsigned long DELAY_CALL_DURATION = 30000;  // Длительность звонка
@@ -52,9 +52,10 @@ const unsigned long DELAY_CALL_DURATION = 30000;  // Длительность з
 // ==========================================
 // 3. ТАЙМЕРЫ (ОТСЧЁТ ВРЕМЕНИ)
 // ==========================================
-unsigned long timerDaily = 0; // Таймер планового отчёта (~12 часов)
-unsigned long timerAlarm = 0; // Таймер проверки аварийных условий (1 минута)
-unsigned long timerSMS = 0;   // Таймер опроса буфера UART на наличие входящих SMS
+unsigned long timerDaily = 0;  // Таймер планового отчёта (~12 часов)
+unsigned long timerAlarm = 0;  // Таймер проверки аварийных условий (1 минута)
+unsigned long timerSMS = 0;    // Таймер опроса буфера UART на наличие входящих SMS
+unsigned long gsmLockTime = 0; // Защита от вечного gsmLock
 
 // ==========================================
 // 4. ПЕРЕМЕННЫЕ ТЕМПЕРАТУРЫ
@@ -66,29 +67,23 @@ float tBoiler = 0.0;
 // ==========================================
 // 5. СТРОКИ И ТЕКСТЫ СООБЩЕНИЙ
 // ==========================================
-String txtAmbient = "Ambient temp "; // Префикс уличной температуры
-String txtHome = " Home temp ";      // Префикс температуры в доме
-String txtBoiler = " Boiler temp ";  // Префикс температуры котла
-String txtBat = " Bat ";             // Префикс заряда батареи
-String txtWarning = "Warning!";      // Текст аварийного предупреждения
-String batLevel = "";                // Буфер для ответа модуля об уровне заряда (+CBC)
-String smsBuffer = "";               // Буфер для входящего SMS
-String msg = "";                     // Исходящее сообщение
+String batLevel = "";  // Буфер для ответа модуля об уровне заряда (+CBC)
+String smsBuffer = ""; // Буфер для входящего SMS
+String msg = "";       // Исходящее сообщение
 
 // ==========================================
 // 6. ФЛАГИ СОСТОЯНИЯ СИСТЕМЫ
 // ==========================================
-boolean systemWorking = false;       // Разрешение работы циклов daily() и alarm()
-volatile boolean btnFlag = false;    // Флаг нажатия кнопки (обработчик прерывания)
-bool boilerAlarmState = false;       // Флаг текущей аварии котла
-bool homeAlarmState = false;         // Флаг текущей аварии дома
+boolean systemWorking = false;                    // Разрешение работы циклов daily() и alarm()
+bool gsmBusy = false;                             // Флаг занятости SIM800
+bool boilerAlarmState = false;                    // Флаг текущей аварии котла
+bool homeAlarmState = false;                      // Флаг текущей аварии дома
 unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки последнего тревожного сообщения
                                                   // Инициализация = ALARM_COOLDOWN позволяет первому аларму сработать сразу
 
 // ==========================================
 // 7. ПРОТОТИПЫ ФУНКЦИЙ
 // ==========================================
-void button_reset();             // Обработчик внешнего прерывания по кнопке сброса
 void daily();                    // Отправка планового отчёта каждые ~12 часов
 void alarm();                    // Мониторинг аварийных температур, отправка SMS + авто-звонок
 void receivingSMS();             // Приём, парсинг и обработка входящих SMS-команд
@@ -106,6 +101,8 @@ void handleStartCommand();       // Обработчик команды Start
 void handleStopCommand();        // Обработчик команды Stop
 void makeCall();                 // Совершить звонок
 void getAllTemperature();        // Опрос датчиков температуры
+bool gsmLock();                  // SIM800 занять
+void gsmUnlock();                // SIM800 освободить
 
 void setup()
 
@@ -116,7 +113,6 @@ void setup()
   msg.reserve(160);
   batLevel.reserve(32);
   power.setSleepMode(ADC_SLEEP); // наиболее глубокий сон, отключается всё кроме WDT и внешних прерываний, просыпается от аппаратных (обычных + PCINT) или WDT за 1000 тактов (62 мкс)
-  pinMode(PIN_BTN_RST, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_DTR, OUTPUT);
   sensors.begin();             // включаем датчики температуры
@@ -131,35 +127,12 @@ void setup()
   delay(DELAY_AT_COMMAND);
   sleepSIM800L();
   delay(2000); // Задержка для стабилизации входов, что-бы не срабатывало ложное прерывание
-  attachInterrupt(1, button_reset, FALLING);
-  // Serial.begin(9600); // Для отладки по монитору порта
-}
 
-void button_reset()
-{
-  btnFlag = 1;
-  power.wakeUp();
+  // Serial.begin(9600); // Для отладки по монитору порта
 }
 
 void loop()
 {
-  if (btnFlag == 1)
-  {
-    digitalWrite(PIN_LED, HIGH);
-    delay(DELAY_LED_ON);
-    wakeSIM800L();
-    getAllTemperature();
-    getBatLevel();
-    constructInfoMessage();
-    sendSMS(msg);
-    deleteAllSMS();
-    sleepSIM800L();
-    btnFlag = 0;
-    digitalWrite(PIN_LED, LOW);
-    resetFunc(); // При нажатии кнопки даёт точку отсчёта времени для выполнения daily();
-    // updateSerial(); // Для отладки по монитору порта
-  }
-
   if (systemWorking == true)
   {
     daily(); // 12 часовое оповещение
@@ -176,6 +149,8 @@ void daily()
   if (millis() - timerDaily >= INTERVAL_DAILY)
   {
     timerDaily += INTERVAL_DAILY;
+    if (!gsmLock())
+      return;
     getAllTemperature();
     wakeSIM800L();
     getBatLevel();
@@ -183,6 +158,7 @@ void daily()
     sendSMS(msg);
     deleteAllSMS();
     sleepSIM800L();
+    gsmUnlock();
   }
 }
 
@@ -219,6 +195,8 @@ void alarm()
     // Отправляем оповещение ТОЛЬКО при смене состояния + соблюдении кулдауна
     if ((homeAlarmState || boilerAlarmState) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
     {
+      if (!gsmLock())
+        return;
       lastAlarmSentTime = millis();
       wakeSIM800L();
       constructAlarmMessage();
@@ -227,6 +205,7 @@ void alarm()
       makeCall();
       clearBuffer();
       sleepSIM800L();
+      gsmUnlock();
     }
   }
 }
@@ -244,7 +223,8 @@ void makeCall()
 
 void receivingSMS()
 {
-
+  if (gsmBusy)
+    return;
   if (millis() - timerSMS >= INTERVAL_SMS_POLL)
   {
     timerSMS += INTERVAL_SMS_POLL;
@@ -279,6 +259,8 @@ void receivingSMS()
 
 void handleInfoCommand()
 {
+  if (!gsmLock())
+    return;
   wakeSIM800L();
   getAllTemperature();
   getBatLevel();
@@ -286,30 +268,37 @@ void handleInfoCommand()
   sendSMS(msg);
   deleteAllSMS();
   sleepSIM800L();
+  gsmUnlock();
 }
 
 void handleStartCommand()
 {
+  if (!gsmLock())
+    return;
   systemWorking = true;
   wakeSIM800L();
   sendSMS("Start OK");
   deleteAllSMS();
   sleepSIM800L();
+  gsmUnlock();
 }
 
 void handleStopCommand()
 {
+  if (!gsmLock())
+    return;
   systemWorking = false;
   wakeSIM800L();
   sendSMS("Stop OK");
   deleteAllSMS();
   sleepSIM800L();
+  gsmUnlock();
 }
 
 void wakeSIM800L()
 {
   digitalWrite(PIN_DTR, LOW); // выключаем энергосбережение SIM800L
-  delay(1000);
+  delay(2000);
   SerialSIM800L.println("AT"); // установка соединения с SIM800L
   delay(DELAY_AT_COMMAND);
   clearBuffer();
@@ -322,7 +311,7 @@ void sleepSIM800L()
 
 void deleteAllSMS()
 {
-  SerialSIM800L.println("AT+CMGDA=\"DEL ALL\"");\
+  SerialSIM800L.println("AT+CMGDA=\"DEL ALL\"");
   delay(DELAY_AT_COMMAND);
   clearBuffer();
 }
@@ -334,6 +323,30 @@ void clearBuffer()
   {
     SerialSIM800L.read();
   }
+}
+
+bool gsmLock()
+{
+  if (gsmBusy)
+  {
+    // защита от зависания
+    if (millis() - gsmLockTime > 30000)
+    {
+      gsmBusy = false;
+    }
+    else
+    {
+      return false;
+    }
+  }
+  gsmBusy = true;
+  gsmLockTime = millis();
+  return true;
+}
+
+void gsmUnlock()
+{
+  gsmBusy = false;
 }
 
 void getBatLevel()
@@ -359,16 +372,16 @@ void getAllTemperature()
 void constructInfoMessage()
 {
   msg = "";
-  msg += txtAmbient;
+  msg += "Ambient temp ";
   msg += tAmbient;
 
-  msg += txtHome;
+  msg += " Home temp ";
   msg += tHome;
 
-  msg += txtBoiler;
+  msg += " Boiler temp ";
   msg += tBoiler;
 
-  msg += txtBat;
+  msg += " Bat ";
   msg += batLevel.substring(16, 18);
   msg += "%";
 }
@@ -376,16 +389,16 @@ void constructInfoMessage()
 void constructAlarmMessage()
 {
   msg = "";
-  msg += txtWarning;
+  msg += "Warning!";
 
   if (boilerAlarmState)
   {
-    msg += txtBoiler;
+    msg += " Boiler temp ";
     msg += tBoiler;
   }
   if (homeAlarmState)
   {
-    msg += txtHome;
+    msg += " Home temp ";
     msg += tHome;
   }
 }

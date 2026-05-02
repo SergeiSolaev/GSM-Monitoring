@@ -11,7 +11,7 @@
 #include <Wire.h>              // I2C шина (требуется ядром AVR, хотя DS18B20 использует OneWire)
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
 
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.3.1"
 
 // Объекты связи
 OneWire oneWire(4);                  // Шина данных датчиков температуры
@@ -150,12 +150,13 @@ void alarm()
   if (millis() - timerAlarm >= INTERVAL_ALARM)
   {
     getAllTemperature();
+    getBatLevel();
     timerAlarm += INTERVAL_ALARM;
 
     // Определяем текущее состояние датчиков
     bool boilerFault = (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX);
     bool homeFault = (tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX);
-    bool batFault = (batLevel.toInt() <= BAT_LEVEL_MIN);
+    bool batFault = (batLevel.substring(16, 18).toInt() <= BAT_LEVEL_MIN);
 
     // Логика перехода в состояние аварии
     if (boilerFault)
@@ -428,7 +429,8 @@ void constructAlarmMessage()
   if (batAlarmState)
   {
     msg += " | Bat ";
-    msg += batLevel;
+    msg += batLevel.substring(16, 18);
+    msg += "%";
   }
 }
 

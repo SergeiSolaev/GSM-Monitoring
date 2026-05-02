@@ -35,16 +35,15 @@ const unsigned long INTERVAL_ALARM = 60000UL;    // Интервал прове�
 const unsigned long ALARM_COOLDOWN = 300000UL;   // Период "охлаждения" повторных алармов (5 минут)
 
 // Задержки (в миллисекундах)
-const unsigned long DELAY_AT_COMMAND = 200;      // Задержка после AT-команды
+const unsigned long DELAY_AT_COMMAND = 200;       // Задержка после AT-команды
 const unsigned long DELAY_AFTER_SMS_SEND = 10000; // Задержка после отправки SMS перед звонком
-const unsigned long DELAY_CALL_DURATION = 20000; // Длительность звонка
+const unsigned long DELAY_CALL_DURATION = 20000;  // Длительность звонка
 
 // ==========================================
 // 3. ТАЙМЕРЫ (ОТСЧЁТ ВРЕМЕНИ)
 // ==========================================
 unsigned long timerDaily = 0;  // Таймер планового отчёта (~12 часов)
 unsigned long timerAlarm = 0;  // Таймер проверки аварийных условий (1 минута)
-unsigned long timerSMS = 0;    // Таймер опроса буфера UART на наличие входящих SMS
 unsigned long gsmLockTime = 0; // Защита от вечного gsmLock
 
 // ==========================================
@@ -333,10 +332,12 @@ void constructInfoMessage()
   msg += " | Bat ";
   msg += batLevel.substring(16, 18);
   msg += "%";
-  
+
   msg += " | Status";
-  if(systemWorking) msg += " working.";
-  if(!systemWorking) msg += " stoped.";
+  if (systemWorking)
+    msg += " working.";
+  if (!systemWorking)
+    msg += " stoped.";
 }
 
 void constructAlarmMessage()

@@ -67,6 +67,7 @@ boolean systemWorking = false;                    // Разрешение раб
 bool gsmBusy = false;                             // Флаг занятости SIM800
 bool boilerAlarmState = false;                    // Флаг текущей аварии котла
 bool homeAlarmState = false;                      // Флаг текущей аварии дома
+bool batAlarmState = false;                       // Флаг разряда батареи
 unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки последнего тревожного сообщения
                                                   // Инициализация = ALARM_COOLDOWN позволяет первому аларму сработать сразу
 
@@ -145,6 +146,7 @@ void alarm()
     // Определяем текущее состояние датчиков
     bool boilerFault = (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX);
     bool homeFault = (tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX);
+    bool batFault = (batLevel.toInt() <= 20);
 
     // Логика перехода в состояние аварии
     if (boilerFault)
@@ -165,8 +167,16 @@ void alarm()
       homeAlarmState = false;
     }
 
+    if (batFault)
+    {
+      batAlarmState = true;
+    }
+    else if (!batFault)
+    {
+      batAlarmState = false;
+    }
     // Отправляем оповещение ТОЛЬКО при смене состояния + соблюдении кулдауна
-    if ((homeAlarmState || boilerAlarmState) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
+    if ((homeAlarmState || boilerAlarmState || batAlarmState) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
     {
       if (!gsmLock())
         return;
@@ -354,6 +364,11 @@ void constructAlarmMessage()
   {
     msg += " | Home temp ";
     msg += tHome;
+  }
+  if (batAlarmState)
+  {
+    msg += " | Bat ";
+    msg += batLevel;
   }
 }
 

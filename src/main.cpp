@@ -69,6 +69,9 @@ bool gsmBusy = false;                             // Флаг занятости
 bool boilerAlarmState = false;                    // Флаг текущей аварии котла
 bool homeAlarmState = false;                      // Флаг текущей аварии дома
 bool batAlarmState = false;                       // Флаг разряда батареи
+bool ambientSensorDisconnected = false;           // Флаг обрыва уличного датчика
+bool homeSensorDisconnected = false;              // Флаг обрыва домашнего датчика
+bool boilerSensorDisconnected = false;            // Флаг обрыва датчика котла
 unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки последнего тревожного сообщения
                                                   // Инициализация = ALARM_COOLDOWN позволяет первому аларму сработать сразу
 
@@ -177,7 +180,7 @@ void alarm()
       batAlarmState = false;
     }
     // Отправляем оповещение ТОЛЬКО при смене состояния + соблюдении кулдауна
-    if ((homeAlarmState || boilerAlarmState || batAlarmState) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
+    if ((homeAlarmState || boilerAlarmState || batAlarmState || ambientSensorDisconnected || homeSensorDisconnected || boilerSensorDisconnected) && (millis() - lastAlarmSentTime >= ALARM_COOLDOWN))
     {
       if (!gsmLock())
         return;
@@ -326,19 +329,32 @@ void getAllTemperature()
   tAmbient = sensors.getTempCByIndex(0);
   tHome = sensors.getTempCByIndex(1);
   tBoiler = sensors.getTempCByIndex(2);
+
+  ambientSensorDisconnected = (tAmbient == DEVICE_DISCONNECTED_C);
+  homeSensorDisconnected = (tHome == DEVICE_DISCONNECTED_C);
+  boilerSensorDisconnected = (tBoiler == DEVICE_DISCONNECTED_C);
 }
 
 void constructInfoMessage()
 {
   msg = "";
   msg += "Ambient temp ";
-  msg += tAmbient;
+  if (ambientSensorDisconnected)
+    msg += "SENSOR BREAK";
+  else
+    msg += tAmbient;
 
   msg += " | Home temp ";
-  msg += tHome;
+  if (homeSensorDisconnected)
+    msg += "SENSOR BREAK";
+  else
+    msg += tHome;
 
   msg += " | Boiler temp ";
-  msg += tBoiler;
+  if (boilerSensorDisconnected)
+    msg += "SENSOR BREAK";
+  else
+    msg += tBoiler;
 
   msg += " | Bat ";
   msg += batLevel.substring(16, 18);
@@ -356,16 +372,26 @@ void constructAlarmMessage()
   msg = "";
   msg += "Warning!";
 
-  if (boilerAlarmState)
+  if (boilerSensorDisconnected)
+  {
+    msg += " | Boiler sensor break";
+  }
+  else if (boilerAlarmState)
   {
     msg += " | Boiler temp ";
     msg += tBoiler;
   }
-  if (homeAlarmState)
+
+  if (homeSensorDisconnected)
+  {
+    msg += " | Home sensor break";
+  }
+  else if (homeAlarmState)
   {
     msg += " | Home temp ";
     msg += tHome;
   }
+
   if (batAlarmState)
   {
     msg += " | Bat ";

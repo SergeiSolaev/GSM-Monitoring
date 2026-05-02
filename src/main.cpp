@@ -28,6 +28,7 @@ const float TEMP_BOILER_MIN = 10.0; // Минимальная температу
 const float TEMP_BOILER_MAX = 50.0; // Максимальная температура котла (°C)
 const float TEMP_HOME_MIN = 5.0;    // Минимальная температура в доме (°C)
 const float TEMP_HOME_MAX = 30.0;   // Максимальная температура в доме (°C)
+const int BAT_LEVEL_MIN = 20;       // Минимальный уровень заряда батареи, в %
 
 // Таймеры и интервалы (в миллисекундах)
 const unsigned long INTERVAL_DAILY = 41546016UL; // Интервал планового отчёта (~12 часов с коррекцией)
@@ -146,7 +147,7 @@ void alarm()
     // Определяем текущее состояние датчиков
     bool boilerFault = (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX);
     bool homeFault = (tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX);
-    bool batFault = (batLevel.toInt() <= 20);
+    bool batFault = (batLevel.toInt() <= BAT_LEVEL_MIN);
 
     // Логика перехода в состояние аварии
     if (boilerFault)

@@ -22,6 +22,10 @@ DallasTemperature sensors(&oneWire); // Контроллер датчиков
 // ==========================================
 
 const char PHONE_NUMBER[] = "+79277749863";
+const char *WHITELISTED_NUMBERS[] = {
+    "+79277749863",
+};
+const uint8_t WHITELISTED_NUMBERS_COUNT = sizeof(WHITELISTED_NUMBERS) / sizeof(WHITELISTED_NUMBERS[0]);
 
 // Пороговые значения температур для аварийных условий
 const float TEMP_BOILER_MIN = 10.0; // Минимальная температура котла (°C)
@@ -78,22 +82,23 @@ unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки
 // ==========================================
 // 7. ПРОТОТИПЫ ФУНКЦИЙ
 // ==========================================
-void daily();                    // Отправка планового отчёта каждые ~12 часов
-void alarm();                    // Мониторинг аварийных температур, отправка SMS + авто-звонок
-void receivingSMS();             // Приём, парсинг и обработка входящих SMS-команд
-void sendSMS(const String &msg); // Отправка SMS
-void clearBuffer();              // Полная очистка буфера программного UART
-void deleteAllSMS();             // Удаление всех смс
-void constructInfoMessage();     // Конструктор информационного сообщения
-void constructAlarmMessage();    // Конструктор предупредительного сообщения
-void getBatLevel();              // Получение уровня заряда батареи
-void handleInfoCommand();        // Обработчик команды Info
-void handleStartCommand();       // Обработчик команды Start
-void handleStopCommand();        // Обработчик команды Stop
-void makeCall();                 // Совершить звонок
-void getAllTemperature();        // Опрос датчиков температуры
-bool gsmLock();                  // SIM800 занять
-void gsmUnlock();                // SIM800 освободить
+void daily();                                       // Отправка планового отчёта каждые ~12 часов
+void alarm();                                       // Мониторинг аварийных температур, отправка SMS + авто-звонок
+void receivingSMS();                                // Приём, парсинг и обработка входящих SMS-команд
+void sendSMS(const String &msg);                    // Отправка SMS
+void clearBuffer();                                 // Полная очистка буфера программного UART
+void deleteAllSMS();                                // Удаление всех смс
+void constructInfoMessage();                        // Конструктор информационного сообщения
+void constructAlarmMessage();                       // Конструктор предупредительного сообщения
+void getBatLevel();                                 // Получение уровня заряда батареи
+void handleInfoCommand();                           // Обработчик команды Info
+void handleStartCommand();                          // Обработчик команды Start
+void handleStopCommand();                           // Обработчик команды Stop
+void makeCall();                                    // Совершить звонок
+void getAllTemperature();                           // Опрос датчиков температуры
+bool gsmLock();                                     // SIM800 занять
+void gsmUnlock();                                   // SIM800 освободить
+bool isWhitelistedSender(const String &smsPayload); // Проверка номера отправителя смс на наличие в "белом списке"
 
 void setup()
 
@@ -217,6 +222,13 @@ void receivingSMS()
     smsBuffer.replace("\n", "");     // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
     smsBuffer.trim();                // удаляем пробелы вначале и вконце строки
 
+    if (!isWhitelistedSender(smsBuffer))
+    {
+      deleteAllSMS();
+      smsBuffer = "";
+      return;
+    }
+
     // Маршрутизация команд
     if (smsBuffer.endsWith("Info"))
     {
@@ -237,6 +249,27 @@ void receivingSMS()
     }
     smsBuffer = ""; // Сброс буфера после обработки
   }
+}
+
+bool isWhitelistedSender(const String &smsPayload)
+{
+  int senderStart = smsPayload.indexOf("\"+");
+  if (senderStart < 0)
+    return false;
+
+  int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
+  if (senderEnd < 0)
+    return false;
+
+  String sender = smsPayload.substring(senderStart + 1, senderEnd);
+
+  for (uint8_t i = 0; i < WHITELISTED_NUMBERS_COUNT; i++)
+  {
+    if (sender == WHITELISTED_NUMBERS[i])
+      return true;
+  }
+
+  return false;
 }
 
 void handleInfoCommand()

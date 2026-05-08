@@ -458,19 +458,19 @@ void constructInfoMessage()
   else
     msg += tAmbient;
 
-  msg += " | Home temp ";
+  msg += "\nHome temp ";
   if (homeSensorDisconnected)
     msg += "SENSOR BREAK";
   else
     msg += tHome;
 
-  msg += " | Boiler temp ";
+  msg += "\nBoiler temp ";
   if (boilerSensorDisconnected)
     msg += "SENSOR BREAK";
   else
     msg += tBoiler;
 
-  msg += " | Bat ";
+  msg += "\nBat ";
   if (batPercent >= 0)
   {
     msg += batPercent;
@@ -481,11 +481,11 @@ void constructInfoMessage()
     msg += "N/A";
   }
 
-  msg += " | Status";
+  msg += "\nStatus";
   if (systemWorking)
     msg += " working.";
   if (!systemWorking)
-    msg += " stoped.";
+    msg += " stoped";
 }
 
 void constructAlarmMessage()
@@ -495,27 +495,27 @@ void constructAlarmMessage()
 
   if (boilerSensorDisconnected)
   {
-    msg += " | Boiler sensor break";
+    msg += "\nBoiler sensor break";
   }
   else if (boilerAlarmState)
   {
-    msg += " | Boiler temp ";
+    msg += "\nBoiler temp ";
     msg += tBoiler;
   }
 
   if (homeSensorDisconnected)
   {
-    msg += " | Home sensor break";
+    msg += "\nHome sensor break";
   }
   else if (homeAlarmState)
   {
-    msg += " | Home temp ";
+    msg += "\nHome temp ";
     msg += tHome;
   }
 
   if (batAlarmState)
   {
-    msg += " | Bat ";
+    msg += "\nBat ";
     if (batPercent >= 0)
     {
       msg += batPercent;

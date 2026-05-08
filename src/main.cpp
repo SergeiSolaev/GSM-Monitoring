@@ -63,6 +63,8 @@ float tBoiler = 0.0;
 // ==========================================
 String batLevel = "";  // Буфер для ответа модуля об уровне заряда (+CBC)
 int batPercent = -1;   // Процент батареи, извлечённый из ответа +CBC
+String signalLevel = "";
+int signalRssi = -1;   // Уровень сигнала
 String smsBuffer = ""; // Буфер для входящего SMS
 String msg = "";       // Исходящее сообщение
 
@@ -93,6 +95,8 @@ void deleteAllSMS();                                // Удаление всех
 void constructInfoMessage();                        // Конструктор информационного сообщения
 void constructAlarmMessage();                       // Конструктор предупредительного сообщения
 void getBatLevel();                                 // Получение уровня заряда батареи
+void getSignalLevel();                              // Получение уровня GSM сигнала
+int parseSignalLevel(const String &response);       // Извлечение RSSI из ответа +CSQ
 void handleInfoCommand();                           // Обработчик команды Info
 void handleStartCommand();                          // Обработчик команды Start
 void handleStopCommand();                           // Обработчик команды Stop
@@ -204,6 +208,19 @@ int parseBatteryPercent(const String &response)
   return response.substring(firstComma + 1, secondComma).toInt();
 }
 
+int parseSignalLevel(const String &response)
+{
+  int colon = response.indexOf(':');
+  if (colon < 0)
+    return -1;
+
+  int comma = response.indexOf(',', colon + 1);
+  if (comma < 0)
+    return -1;
+
+  return response.substring(colon + 1, comma).toInt();
+}
+
 void daily()
 {
 
@@ -214,6 +231,7 @@ void daily()
       return;
     getAllTemperature();
     getBatLevel();
+    getSignalLevel();
     constructInfoMessage();
     sendSMS(msg);
     deleteAllSMS();
@@ -361,6 +379,7 @@ void handleInfoCommand()
     return;
   getAllTemperature();
   getBatLevel();
+  getSignalLevel();
   constructInfoMessage();
   sendSMS(msg);
   deleteAllSMS();
@@ -437,6 +456,21 @@ void getBatLevel()
   clearBuffer();
 }
 
+void getSignalLevel()
+{
+  if (sendATCommand("AT+CSQ", "+CSQ:", 2000, &signalLevel))
+  {
+    signalRssi = parseSignalLevel(signalLevel);
+  }
+  else
+  {
+    signalLevel = "";
+    signalRssi = -1;
+  }
+
+  clearBuffer();
+}
+
 void getAllTemperature()
 {
   sensors.requestTemperatures();
@@ -475,6 +509,29 @@ void constructInfoMessage()
   {
     msg += batPercent;
     msg += "%";
+  }
+  else
+  {
+    msg += "N/A";
+  }
+
+  msg += "\nSignal ";
+  if (signalRssi >= 0)
+  {
+    msg += signalRssi;
+    msg += "/31";
+
+    // Оценка качества сигнала:
+    if (signalRssi <= 9) // 0-9   = очень плохой сигнал
+      msg += " VERY BAD";
+    else if (signalRssi <= 14) // 10-14 = слабый сигнал
+      msg += " WEAK";
+    else if (signalRssi <= 19) // 15-19 = нормальный сигнал
+      msg += " NORMAL";
+    else if (signalRssi <= 24) // 20-24 = хороший сигнал
+      msg += " GOOD";
+    else
+      msg += " EXCELLENT"; // 25-31 = отличный сигнал
   }
   else
   {

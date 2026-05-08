@@ -8,7 +8,7 @@
 // 1. БИБЛИОТЕКИ И АППАРАТНЫЕ ОБЪЕКТЫ
 // ==========================================
 #include <HardwareSerial.h>    // Программный UART для связи с SIM800L
-#include <Wire.h>              // I2C шина (требуется ядром AVR, хотя DS18B20 использует OneWire)
+#include <OneWire.h>           // Шина OneWire для DS18B20
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
 
 #define FW_VERSION "0.3.1"
@@ -62,6 +62,7 @@ float tBoiler = 0.0;
 // 5. СТРОКИ И ТЕКСТЫ СООБЩЕНИЙ
 // ==========================================
 String batLevel = "";  // Буфер для ответа модуля об уровне заряда (+CBC)
+int batPercent = -1;   // Процент батареи, извлечённый из ответа +CBC
 String smsBuffer = ""; // Буфер для входящего SMS
 String msg = "";       // Исходящее сообщение
 
@@ -86,6 +87,7 @@ void daily();                                       // Отправка план
 void alarm();                                       // Мониторинг аварийных температур, отправка SMS + авто-звонок
 void receivingSMS();                                // Приём, парсинг и обработка входящих SMS-команд
 void sendSMS(const String &msg);                    // Отправка SMS
+bool sendATCommand(const String &command, const String &expected, unsigned long timeout, String *response = nullptr); // Отправка AT-команды с ожиданием ответа
 void clearBuffer();                                 // Полная очистка буфера программного UART
 void deleteAllSMS();                                // Удаление всех смс
 void constructInfoMessage();                        // Конструктор информационного сообщения
@@ -99,6 +101,8 @@ void getAllTemperature();                           // Опрос датчико
 bool gsmLock();                                     // SIM800 занять
 void gsmUnlock();                                   // SIM800 освободить
 bool isWhitelistedSender(const String &smsPayload); // Проверка номера отправителя смс на наличие в "белом списке"
+String readGsmResponse(unsigned long timeout);      // Чтение ответа модема в строку
+int parseBatteryPercent(const String &response);    // Извлечение процента батареи из ответа +CBC
 
 void setup()
 
@@ -108,14 +112,10 @@ void setup()
   batLevel.reserve(32);
   sensors.begin();      // включаем датчики температуры
   Serial.begin(9600);   // настройка скорости обмена данными с SIM800L
-  Serial.println("AT"); // установка соединения с SIM800L
-  delay(DELAY_AT_COMMAND);
-  Serial.println("AT+CMGF=1"); // включаем TextMode для SMS
-  delay(DELAY_AT_COMMAND);
-  Serial.println("AT+CNMI=1,2,0,0,0"); // устанавливаем режим обработки поступившие SMS. Данный режим сразу выводит поступившее SMS
-  delay(DELAY_AT_COMMAND);
-  Serial.println("AT+CSCLK=0"); // отключаем возможность работы энергосбережения
-  delay(DELAY_AT_COMMAND);
+  sendATCommand("AT", "OK", 1000); // установка соединения с SIM800L
+  sendATCommand("AT+CMGF=1", "OK", 1000); // включаем TextMode для SMS
+  sendATCommand("AT+CNMI=1,2,0,0,0", "OK", 1000); // устанавливаем режим обработки поступившие SMS
+  sendATCommand("AT+CSCLK=0", "OK", 1000); // отключаем возможность работы энергосбережения
 }
 
 void loop()
@@ -126,6 +126,82 @@ void loop()
     daily(); // 12 часовое оповещение
     alarm(); // сигнализация, опрос раз в 1 минуту
   }
+}
+
+void flushGsmInput()
+{
+  while (Serial.available())
+  {
+    Serial.read();
+  }
+}
+
+String readGsmResponse(unsigned long timeout)
+{
+  String response;
+  unsigned long start = millis();
+  unsigned long lastData = start;
+
+  while (millis() - start < timeout)
+  {
+    while (Serial.available())
+    {
+      response += (char)Serial.read();
+      lastData = millis();
+    }
+
+    if (response.length() > 0 && (millis() - lastData) > 120)
+    {
+      break;
+    }
+  }
+
+  response.replace("\r", "");
+  response.trim();
+  return response;
+}
+
+bool sendATCommand(const String &command, const String &expected, unsigned long timeout, String *response)
+{
+  flushGsmInput();
+  Serial.println(command);
+
+  String resp = readGsmResponse(timeout);
+
+  if (response != nullptr)
+  {
+    *response = resp;
+  }
+
+  if (resp.length() == 0)
+  {
+    return false;
+  }
+
+  if (resp.indexOf("ERROR") >= 0)
+  {
+    return false;
+  }
+
+  if (expected.length() == 0)
+  {
+    return true;
+  }
+
+  return resp.indexOf(expected) >= 0;
+}
+
+int parseBatteryPercent(const String &response)
+{
+  int firstComma = response.indexOf(',');
+  if (firstComma < 0)
+    return -1;
+
+  int secondComma = response.indexOf(',', firstComma + 1);
+  if (secondComma < 0)
+    return -1;
+
+  return response.substring(firstComma + 1, secondComma).toInt();
 }
 
 void daily()
@@ -156,7 +232,7 @@ void alarm()
     // Определяем текущее состояние датчиков
     bool boilerFault = (tBoiler <= TEMP_BOILER_MIN || tBoiler >= TEMP_BOILER_MAX);
     bool homeFault = (tHome <= TEMP_HOME_MIN || tHome >= TEMP_HOME_MAX);
-    bool batFault = (batLevel.substring(16, 18).toInt() <= BAT_LEVEL_MIN);
+    bool batFault = (batPercent >= 0 && batPercent <= BAT_LEVEL_MIN);
 
     // Логика перехода в состояние аварии
     if (boilerFault)
@@ -204,12 +280,18 @@ void alarm()
 void makeCall()
 {
   delay(1000);
-  Serial.print("ATD");
-  Serial.print(PHONE_NUMBER);
-  Serial.println(";");
+
+  String callCommand = "ATD";
+  callCommand += PHONE_NUMBER;
+  callCommand += ";";
+
+  if (!sendATCommand(callCommand, "OK", 5000))
+  {
+    return;
+  }
+
   delay(DELAY_CALL_DURATION);
-  Serial.println("ATH"); // кладём трубку
-  delay(DELAY_AT_COMMAND);
+  sendATCommand("ATH", "OK", 3000); // кладём трубку
 }
 
 void receivingSMS()
@@ -307,18 +389,14 @@ void handleStopCommand()
 
 void deleteAllSMS()
 {
-  Serial.println("AT+CMGDA=\"DEL ALL\"");
-  delay(DELAY_AT_COMMAND);
+  sendATCommand("AT+CMGDA=\"DEL ALL\"", "OK", 5000);
   clearBuffer();
 }
 
 void clearBuffer()
 {
-  delay(200);
-  while (Serial.available())
-  {
-    Serial.read();
-  }
+  delay(50);
+  flushGsmInput();
 }
 
 bool gsmLock()
@@ -347,13 +425,15 @@ void gsmUnlock()
 
 void getBatLevel()
 {
-  Serial.println("AT+CBC"); // запрос состояния батареи
-  delay(DELAY_AT_COMMAND);  // пауза для обработки модулем АТ-комнады
-  if (Serial.available())
-  {                                 // проверка информации в буфере
-    batLevel = Serial.readString(); // чтение ответа от модуля в переменную batLevel
+  if (sendATCommand("AT+CBC", "+CBC:", 2000, &batLevel))
+  {
+    batPercent = parseBatteryPercent(batLevel);
   }
-  batLevel.replace("\n", ""); // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
+  else
+  {
+    batLevel = "";
+    batPercent = -1;
+  }
   clearBuffer();
 }
 
@@ -391,8 +471,15 @@ void constructInfoMessage()
     msg += tBoiler;
 
   msg += " | Bat ";
-  msg += batLevel.substring(16, 18);
-  msg += "%";
+  if (batPercent >= 0)
+  {
+    msg += batPercent;
+    msg += "%";
+  }
+  else
+  {
+    msg += "N/A";
+  }
 
   msg += " | Status";
   if (systemWorking)
@@ -429,20 +516,38 @@ void constructAlarmMessage()
   if (batAlarmState)
   {
     msg += " | Bat ";
-    msg += batLevel.substring(16, 18);
-    msg += "%";
+    if (batPercent >= 0)
+    {
+      msg += batPercent;
+      msg += "%";
+    }
+    else
+    {
+      msg += "N/A";
+    }
   }
 }
 
 void sendSMS(const String &msg)
 {
-  Serial.print("AT+CMGS=\"");
-  Serial.print(PHONE_NUMBER);
-  Serial.println("\"");
-  delay(DELAY_AT_COMMAND);
-  Serial.println(msg);
-  delay(DELAY_AT_COMMAND);
+  String smsCommand = "AT+CMGS=\"";
+  smsCommand += PHONE_NUMBER;
+  smsCommand += "\"";
+
+  if (!sendATCommand(smsCommand, ">", 5000))
+  {
+    return;
+  }
+
+  Serial.print(msg);
   Serial.write(26);
-  delay(DELAY_AFTER_SMS_SEND);
+
+  String response = readGsmResponse(DELAY_AFTER_SMS_SEND);
+  if (response.indexOf("OK") < 0 || response.indexOf("+CMGS:") < 0)
+  {
+    clearBuffer();
+    return;
+  }
+
   clearBuffer();
 }

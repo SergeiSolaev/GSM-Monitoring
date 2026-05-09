@@ -10,6 +10,7 @@
 #include <HardwareSerial.h>    // Программный UART для связи с SIM800L
 #include <OneWire.h>           // Шина OneWire для DS18B20
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
+#include <GyverWDT.h>          // Сторожевой пёс, охраняет от зависаний МК
 
 #define FW_VERSION "0.4.0"
 
@@ -70,6 +71,7 @@ String msg = "";          // Исходящее сообщение
 String gsmDateTime = "";  // Время из SIM800L
 String currentDate = "";  // Время из SIM800L 
 String currentTime = "";  // Время из SIM800L
+String resetReason = "";  // Причина перезакгрузки
 
 // ==========================================
 // 6. RTC на Arduino
@@ -131,10 +133,14 @@ bool parseDateTime(const String &response);         // Парсинг +CCLK
 void syncInternalClock();                           // Синхронизация времени и даты с SIM800L
 void updateInternalClock();                         // Обновление времени и даты внутри Arduino
 bool isTimeValid();                                 // Проверка валидности времени и даты полученных от SIM800L
+void detectResetReason();                           // Определение причины перезагрузки
+void sendBootMessage();                             // SMS после запуска устройства
 
 void setup()
 
 {
+  Watchdog.disable();
+  detectResetReason();
   smsBuffer.reserve(160);
   msg.reserve(160);
   batLevel.reserve(32);
@@ -147,11 +153,15 @@ void setup()
   sendATCommand("AT+CSCLK=0", "OK", 1000);        // отключаем возможность работы энергосбережения
   sendATCommand("AT+CLTS=1", "OK", 3000);         // включаем синхронизацию времени от сети
   syncInternalClock();
+  sendBootMessage();
   // sendATCommand("AT&W", "OK", 3000);           // сохраняем настройки в EEPROM SIM800L. После сделать HARD RESET.
+  // Включаем watchdog на 8 секунд
+  Watchdog.enable(RESET_MODE, WDT_TIMEOUT_8S);
 }
 
 void loop()
 {
+  Watchdog.reset();
   updateInternalClock();
   receivingSMS(); 
   daily();
@@ -177,6 +187,49 @@ void flushGsmInput()
   {
     Serial.read();
   }
+}
+
+void detectResetReason()
+{
+  uint8_t resetFlags = MCUSR;
+
+  MCUSR = 0;
+
+  if (resetFlags & (1 << WDRF))
+  {
+    resetReason = "WATCHDOG";
+  }
+  else if (resetFlags & (1 << BORF))
+  {
+    resetReason = "BROWNOUT";
+  }
+  else if (resetFlags & (1 << EXTRF))
+  {
+    resetReason = "EXTERNAL RESET";
+  }
+  else if (resetFlags & (1 << PORF))
+  {
+    resetReason = "POWER ON";
+  }
+  else
+  {
+    resetReason = "UNKNOWN";
+  }
+
+  // WATCHDOG      -> зависание программы
+  // BROWNOUT      -> просадка питания
+  // EXTERNAL RESET-> reset pin
+  // POWER ON      -> включение питания
+}
+
+void sendBootMessage()
+{
+  msg = "";
+  msg += "System rebooted";
+  msg += "\nReason: ";
+  msg += resetReason;
+
+  sendSMS(msg);
 }
 
 void syncInternalClock()
@@ -277,6 +330,7 @@ String readGsmResponse(unsigned long timeout)
 
   while (millis() - start < timeout)
   {
+    Watchdog.reset();
     while (Serial.available())
     {
       response += (char)Serial.read();
@@ -506,7 +560,13 @@ void makeCall()
     return;
   }
 
-  delay(DELAY_CALL_DURATION);
+  unsigned long start = millis();
+
+  while (millis() - start < DELAY_CALL_DURATION)
+  {
+    Watchdog.reset();
+    delay(100);
+  }
   sendATCommand("ATH", "OK", 3000); // кладём трубку
 }
 

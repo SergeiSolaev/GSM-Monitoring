@@ -114,6 +114,7 @@ void setup()
   smsBuffer.reserve(160);
   msg.reserve(160);
   batLevel.reserve(32);
+  signalLevel.reserve(32);
   sensors.begin();      // включаем датчики температуры
   Serial.begin(9600);   // настройка скорости обмена данными с SIM800L
   sendATCommand("AT", "OK", 1000); // установка соединения с SIM800L
@@ -488,19 +489,19 @@ void constructInfoMessage()
   msg = "";
   msg += "Ambient temp ";
   if (ambientSensorDisconnected)
-    msg += "SENSOR BREAK";
+    msg += "Error";
   else
     msg += tAmbient;
 
   msg += "\nHome temp ";
   if (homeSensorDisconnected)
-    msg += "SENSOR BREAK";
+    msg += "Error";
   else
     msg += tHome;
 
   msg += "\nBoiler temp ";
   if (boilerSensorDisconnected)
-    msg += "SENSOR BREAK";
+    msg += "Error";
   else
     msg += tBoiler;
 
@@ -512,7 +513,7 @@ void constructInfoMessage()
   }
   else
   {
-    msg += "N/A";
+    msg += "Error";
   }
 
   msg += "\nSignal ";
@@ -523,19 +524,19 @@ void constructInfoMessage()
 
     // Оценка качества сигнала:
     if (signalRssi <= 9) // 0-9   = очень плохой сигнал
-      msg += " VERY BAD";
+      msg += " Very bad";
     else if (signalRssi <= 14) // 10-14 = слабый сигнал
-      msg += " WEAK";
+      msg += " Weak";
     else if (signalRssi <= 19) // 15-19 = нормальный сигнал
-      msg += " NORMAL";
+      msg += " Normal";
     else if (signalRssi <= 24) // 20-24 = хороший сигнал
-      msg += " GOOD";
+      msg += " Good";
     else
-      msg += " EXCELLENT"; // 25-31 = отличный сигнал
+      msg += " Excellent"; // 25-31 = отличный сигнал
   }
   else
   {
-    msg += "N/A";
+    msg += "Error";
   }
 
   msg += "\nStatus";
@@ -552,7 +553,7 @@ void constructAlarmMessage()
 
   if (boilerSensorDisconnected)
   {
-    msg += "\nBoiler sensor break";
+    msg += "\nBoiler sensor error";
   }
   else if (boilerAlarmState)
   {
@@ -580,7 +581,7 @@ void constructAlarmMessage()
     }
     else
     {
-      msg += "N/A";
+      msg += "Error";
     }
   }
 }

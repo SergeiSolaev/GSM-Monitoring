@@ -11,8 +11,10 @@
 #include <OneWire.h>           // Шина OneWire для DS18B20
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
 #include <GyverWDT.h>          // Сторожевой пёс, охраняет от зависаний МК
+#include "config.h"
 
-#define FW_VERSION "0.4.0"
+#define FW_VERSION "0.4.1"
+
 
 // Объекты связи
 OneWire oneWire(4);                  // Шина данных датчиков температуры
@@ -22,11 +24,8 @@ DallasTemperature sensors(&oneWire); // Контроллер датчиков
 // 2. КОНСТАНТЫ И ПИНЫ
 // ==========================================
 
-const char PHONE_NUMBER[] = "+79277749863";
-const char *WHITELISTED_NUMBERS[] = {
-    "+79277749863",
-};
-const uint8_t WHITELISTED_NUMBERS_COUNT = sizeof(WHITELISTED_NUMBERS) / sizeof(WHITELISTED_NUMBERS[0]);
+// Пин hearbeat LED
+#define HEARTBEAT_LED LED_BUILTIN
 
 // Пороговые значения температур для аварийных условий
 const float TEMP_BOILER_MIN = 10.0; // Минимальная температура котла (°C)
@@ -72,6 +71,18 @@ String gsmDateTime = "";  // Время из SIM800L
 String currentDate = "";  // Время из SIM800L 
 String currentTime = "";  // Время из SIM800L
 String resetReason = "";  // Причина перезакгрузки
+
+// ==========================================
+// 6. Heartbeat LED
+// ==========================================
+bool fastBlinkMode = false;
+bool fastBlinkInitialized = false;
+
+unsigned long heartbeatTimer = 0;
+unsigned long fastBlinkTimer = 0;
+unsigned long bootBlinkTimer = 0;
+
+bool ledState = false;
 
 // ==========================================
 // 6. RTC на Arduino
@@ -135,36 +146,61 @@ void updateInternalClock();                         // Обновление вр
 bool isTimeValid();                                 // Проверка валидности времени и даты полученных от SIM800L
 void detectResetReason();                           // Определение причины перезагрузки
 void sendBootMessage();                             // SMS после запуска устройства
+void heartbeatLED();
+void fastBlinkHeartbeat();
 
 void setup()
 
 {
   Watchdog.disable();
   detectResetReason();
+
+  if (resetReason == "WATCHDOG" || resetReason == "BROWNOUT" || resetReason == "EXTERNAL RESET")
+  {
+    fastBlinkMode = true;
+  }
+
   smsBuffer.reserve(160);
   msg.reserve(160);
   batLevel.reserve(32);
   signalLevel.reserve(32);
+
   sensors.begin();                                // включаем датчики температуры
+  pinMode(HEARTBEAT_LED, OUTPUT);
+  digitalWrite(HEARTBEAT_LED, LOW);
   Serial.begin(9600);                             // настройка скорости обмена данными с SIM800L
+
   sendATCommand("AT", "OK", 1000);                // установка соединения с SIM800L
   sendATCommand("AT+CMGF=1", "OK", 1000);         // включаем TextMode для SMS
   sendATCommand("AT+CNMI=1,2,0,0,0", "OK", 1000); // устанавливаем режим обработки поступившие SMS
   sendATCommand("AT+CSCLK=0", "OK", 1000);        // отключаем возможность работы энергосбережения
   sendATCommand("AT+CLTS=1", "OK", 3000);         // включаем синхронизацию времени от сети
-  syncInternalClock();
-  sendBootMessage();
   // sendATCommand("AT&W", "OK", 3000);           // сохраняем настройки в EEPROM SIM800L. После сделать HARD RESET.
-  // Включаем watchdog на 8 секунд
-  Watchdog.enable(RESET_MODE, WDT_TIMEOUT_8S);
+
+  syncInternalClock();
+
+  sendBootMessage();
+
+  Watchdog.enable(RESET_MODE, WDT_TIMEOUT_8S);    // Включаем watchdog c таймаутом сброса 8 секунд
 }
 
 void loop()
 {
   Watchdog.reset();
+
+  if (fastBlinkMode)
+  {
+    fastBlinkHeartbeat();
+  }
+  else
+  {
+    heartbeatLED();
+  }
+
   updateInternalClock();
   receivingSMS(); 
   daily();
+
   if (systemWorking == true)
   {
     alarm();
@@ -178,6 +214,52 @@ void loop()
       lastClockSync = millis();
       gsmUnlock();
     }
+  }
+}
+
+void heartbeatLED()
+{
+  if (millis() - heartbeatTimer >= 3000)
+  {
+    heartbeatTimer = millis();
+
+    digitalWrite(HEARTBEAT_LED, HIGH);
+    ledState = true;
+  }
+
+  if (ledState && millis() - heartbeatTimer >= 60)
+  {
+    digitalWrite(HEARTBEAT_LED, LOW);
+    ledState = false;
+  }
+}
+
+void fastBlinkHeartbeat()
+{
+  // Инициализация только после старта millis()
+  if (!fastBlinkInitialized)
+  {
+    bootBlinkTimer = millis();
+    fastBlinkTimer = millis();
+
+    fastBlinkInitialized = true;
+  }
+
+  if (millis() - fastBlinkTimer >= 120)
+  {
+    fastBlinkTimer = millis();
+
+    ledState = !ledState;
+    digitalWrite(HEARTBEAT_LED, ledState);
+  }
+
+  // 5 секунд быстрого мигания
+  if (millis() - bootBlinkTimer >= 5000)
+  {
+    fastBlinkMode = false;
+    fastBlinkInitialized = false;
+
+    digitalWrite(HEARTBEAT_LED, LOW);
   }
 }
 
@@ -446,8 +528,8 @@ void daily()
   // ======================
   // 07:00
   // ======================
-  if (rtcHour == 8 &&
-      rtcMinute == 30 &&
+  if (rtcHour == 7 &&
+      rtcMinute == 00 &&
       !sentMorning)
   {
     if (!gsmLock())

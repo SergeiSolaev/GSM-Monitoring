@@ -7,6 +7,7 @@
 // ==========================================
 // 1. БИБЛИОТЕКИ И АППАРАТНЫЕ ОБЪЕКТЫ
 // ==========================================
+#include <EEPROM.h>
 #include <HardwareSerial.h>    // Программный UART для связи с SIM800L
 #include <OneWire.h>           // Шина OneWire для DS18B20
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
@@ -23,6 +24,19 @@ DallasTemperature sensors(&oneWire); // Контроллер датчиков
 // ==========================================
 // 2. КОНСТАНТЫ И ПИНЫ
 // ==========================================
+
+// ==========================================
+// EEPROM whitelist
+// ==========================================
+
+#define MAX_WHITELIST_NUMBERS 10
+#define PHONE_LENGTH 16
+
+#define EEPROM_MAGIC_ADDR 0
+#define EEPROM_COUNT_ADDR 1
+#define EEPROM_DATA_ADDR 2
+
+#define EEPROM_MAGIC 0x55
 
 // Пин hearbeat LED
 #define HEARTBEAT_LED LED_BUILTIN
@@ -43,6 +57,19 @@ const unsigned long ALARM_COOLDOWN = 300000UL;   // Период "охлажде
 const unsigned long DELAY_AT_COMMAND = 200;       // Задержка после AT-команды
 const unsigned long DELAY_AFTER_SMS_SEND = 10000; // Задержка после отправки SMS перед звонком
 const unsigned long DELAY_CALL_DURATION = 20000;  // Длительность звонка
+
+// ==========================================
+// EEPROM whitelist
+// ==========================================
+
+#define MAX_WHITELIST_NUMBERS 10
+#define PHONE_LENGTH 16
+
+#define EEPROM_MAGIC_ADDR 0
+#define EEPROM_COUNT_ADDR 1
+#define EEPROM_DATA_ADDR 2
+
+#define EEPROM_MAGIC 0x55
 
 // ==========================================
 // 3. ТАЙМЕРЫ (ОТСЧЁТ ВРЕМЕНИ)
@@ -148,10 +175,24 @@ void detectResetReason();                           // Определение п
 void sendBootMessage();                             // SMS после запуска устройства
 void heartbeatLED();
 void fastBlinkHeartbeat();
+void initWhitelist();
+bool addWhitelistNumber(const String &number);
+bool deleteWhitelistNumber(const String &number);
+bool whitelistContains(const String &number);
+bool readWhitelistNumber(uint8_t index, char *buffer);
+void writeWhitelistNumber(uint8_t index, const String &number);
+uint8_t getWhitelistCount();
+void setWhitelistCount(uint8_t count);
+void handleAddNumberCommand(const String &sms);
+void handleDeleteNumberCommand(const String &sms);
+void handleShowNumbersCommand();
+String extractPhoneNumber(const String &sms);
+bool isAdminSender(const String &smsPayload);
 
 void setup()
 
 {
+  //EEPROM.write(EEPROM_MAGIC_ADDR, 0);  // Очистка EEPROM
   Watchdog.disable();
   detectResetReason();
 
@@ -178,6 +219,8 @@ void setup()
   // sendATCommand("AT&W", "OK", 3000);           // сохраняем настройки в EEPROM SIM800L. После сделать HARD RESET.
 
   syncInternalClock();
+
+  initWhitelist();
 
   sendBootMessage();
 
@@ -215,6 +258,132 @@ void loop()
       gsmUnlock();
     }
   }
+}
+
+void initWhitelist()
+{
+  if (EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC)
+  {
+    return;
+  }
+
+  EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC);
+
+  EEPROM.write(EEPROM_COUNT_ADDR, 1);
+
+  writeWhitelistNumber(0, PHONE_NUMBER);
+}
+
+uint8_t getWhitelistCount()
+{
+  return EEPROM.read(EEPROM_COUNT_ADDR);
+}
+
+void setWhitelistCount(uint8_t count)
+{
+  EEPROM.write(EEPROM_COUNT_ADDR, count);
+}
+
+void writeWhitelistNumber(uint8_t index, const String &number)
+{
+  int addr = EEPROM_DATA_ADDR + index * PHONE_LENGTH;
+
+  for (uint8_t i = 0; i < PHONE_LENGTH; i++)
+  {
+    if (i < number.length())
+      EEPROM.write(addr + i, number[i]);
+    else
+      EEPROM.write(addr + i, 0);
+  }
+}
+
+bool readWhitelistNumber(uint8_t index, char *buffer)
+{
+  if (index >= getWhitelistCount())
+    return false;
+
+  int addr = EEPROM_DATA_ADDR + index * PHONE_LENGTH;
+
+  for (uint8_t i = 0; i < PHONE_LENGTH; i++)
+  {
+    buffer[i] = EEPROM.read(addr + i);
+  }
+
+  buffer[PHONE_LENGTH - 1] = '\0';
+
+  return true;
+}
+
+bool whitelistContains(const String &number)
+{
+  char buf[PHONE_LENGTH];
+
+  for (uint8_t i = 0; i < getWhitelistCount(); i++)
+  {
+    readWhitelistNumber(i, buf);
+
+    if (number == String(buf))
+      return true;
+  }
+
+  return false;
+}
+
+bool addWhitelistNumber(const String &number)
+{
+  if (number.length() == 0)
+    return false;
+
+  if (whitelistContains(number))
+    return false;
+
+  uint8_t count = getWhitelistCount();
+
+  if (count >= MAX_WHITELIST_NUMBERS)
+    return false;
+
+  writeWhitelistNumber(count, number);
+
+  setWhitelistCount(count + 1);
+
+  return true;
+}
+
+bool deleteWhitelistNumber(const String &number)
+{
+  if (number == String(PHONE_NUMBER))
+  {
+    return false;
+  }
+
+  uint8_t count = getWhitelistCount();
+
+  char buf[PHONE_LENGTH];
+
+  for (uint8_t i = 0; i < count; i++)
+  {
+    readWhitelistNumber(i, buf);
+
+    if (number == String(buf))
+    {
+      for (uint8_t j = i; j < count - 1; j++)
+      {
+        char nextBuf[PHONE_LENGTH];
+
+        readWhitelistNumber(j + 1, nextBuf);
+
+        writeWhitelistNumber(j, String(nextBuf));
+      }
+
+      writeWhitelistNumber(count - 1, "");
+
+      setWhitelistCount(count - 1);
+
+      return true;
+    }
+  }
+
+  return false;
 }
 
 void heartbeatLED()
@@ -671,7 +840,7 @@ void receivingSMS()
   if (Serial.available())
   {
     smsBuffer = Serial.readString(); // чтение ответа от модуля в переменную smsBuffer
-    smsBuffer.replace("\n", "");     // замена символа переноса строки, что бы весь ответ был одной строкой и можно было выполнить её парсинг
+    smsBuffer.replace("\r", "");     // замена символа возврат каретки
     smsBuffer.trim();                // удаляем пробелы вначале и вконце строки
 
     if (!isWhitelistedSender(smsBuffer))
@@ -682,7 +851,43 @@ void receivingSMS()
     }
 
     // Маршрутизация команд
-    if (smsBuffer.endsWith("Info"))
+    if (smsBuffer.indexOf("Add number") >= 0)
+    {
+      if (isAdminSender(smsBuffer))
+      {
+        handleAddNumberCommand(smsBuffer);
+      }
+      else
+      {
+        sendSMS("Access denied");
+        deleteAllSMS();
+      }
+    }
+    else if (smsBuffer.indexOf("Del number") >= 0)
+    {
+      if (isAdminSender(smsBuffer))
+      {
+        handleDeleteNumberCommand(smsBuffer);
+      }
+      else
+      {
+        sendSMS("Access denied");
+        deleteAllSMS();
+      }
+    }
+    else if (smsBuffer.indexOf("Show numbers") >= 0)
+    {
+      if (isAdminSender(smsBuffer))
+      {
+        handleShowNumbersCommand();
+      }
+      else
+      {
+        sendSMS("Access denied");
+        deleteAllSMS();
+      }
+    }
+    else if (smsBuffer.endsWith("Info"))
     {
       handleInfoCommand();
     }
@@ -706,22 +911,155 @@ void receivingSMS()
 bool isWhitelistedSender(const String &smsPayload)
 {
   int senderStart = smsPayload.indexOf("\"+");
+
   if (senderStart < 0)
     return false;
 
   int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
+
   if (senderEnd < 0)
     return false;
 
   String sender = smsPayload.substring(senderStart + 1, senderEnd);
 
-  for (uint8_t i = 0; i < WHITELISTED_NUMBERS_COUNT; i++)
+  return whitelistContains(sender);
+}
+
+bool isAdminSender(const String &smsPayload)
+{
+  int senderStart = smsPayload.indexOf("\"+");
+
+  if (senderStart < 0)
+    return false;
+
+  int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
+
+  if (senderEnd < 0)
+    return false;
+
+  String sender = smsPayload.substring(senderStart + 1, senderEnd);
+
+  return sender == String(PHONE_NUMBER);
+}
+
+String extractPhoneNumber(const String &sms)
+{
+  int cmdIndex = sms.indexOf("number");
+
+  if (cmdIndex < 0)
+    return "";
+
+  int plusIndex = sms.indexOf('+', cmdIndex);
+
+  if (plusIndex < 0)
+    return "";
+
+  int endIndex = sms.indexOf('\n', plusIndex);
+
+  String number;
+
+  if (endIndex > plusIndex)
+    number = sms.substring(plusIndex, endIndex);
+  else
+    number = sms.substring(plusIndex);
+
+  number.trim();
+
+  // защита от мусора
+  for (uint8_t i = 0; i < number.length(); i++)
   {
-    if (sender == WHITELISTED_NUMBERS[i])
-      return true;
+    char c = number[i];
+
+    if (!(c == '+' || (c >= '0' && c <= '9')))
+    {
+      number = number.substring(0, i);
+      break;
+    }
   }
 
-  return false;
+  return number;
+}
+
+void handleAddNumberCommand(const String &sms)
+{
+  if (!gsmLock())
+    return;
+
+  String number = extractPhoneNumber(sms);
+
+  if (number.length() == 0)
+  {
+    sendSMS("Add failed");
+    gsmUnlock();
+    return;
+  }
+
+  if (addWhitelistNumber(number))
+  {
+    sendSMS("Number added:\n" + number);
+  }
+  else
+  {
+    sendSMS("Add failed");
+  }
+
+  deleteAllSMS();
+  gsmUnlock();
+}
+
+void handleDeleteNumberCommand(const String &sms)
+{
+  if (!gsmLock())
+    return;
+
+  String number = extractPhoneNumber(sms);
+
+  if (number.length() == 0)
+  {
+    sendSMS("Delete failed");
+    gsmUnlock();
+    return;
+  }
+
+  if (deleteWhitelistNumber(number))
+  {
+    sendSMS("Number deleted:\n" + number);
+  }
+  else
+  {
+    sendSMS("Delete failed");
+  }
+
+  deleteAllSMS();
+  gsmUnlock();
+}
+
+void handleShowNumbersCommand()
+{
+  if (!gsmLock())
+    return;
+
+  msg = "Whitelist:\n";
+
+  char buf[PHONE_LENGTH];
+
+  uint8_t count = getWhitelistCount();
+
+  for (uint8_t i = 0; i < count; i++)
+  {
+    readWhitelistNumber(i, buf);
+
+    msg += String(i + 1);
+    msg += ". ";
+    msg += String(buf);
+    msg += "\n";
+  }
+
+  sendSMS(msg);
+
+  deleteAllSMS();
+
+  gsmUnlock();
 }
 
 void handleInfoCommand()

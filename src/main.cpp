@@ -59,22 +59,8 @@ const unsigned long DELAY_AFTER_SMS_SEND = 10000; // Задержка после
 const unsigned long DELAY_CALL_DURATION = 20000;  // Длительность звонка
 
 // ==========================================
-// EEPROM whitelist
-// ==========================================
-
-#define MAX_WHITELIST_NUMBERS 10
-#define PHONE_LENGTH 16
-
-#define EEPROM_MAGIC_ADDR 0
-#define EEPROM_COUNT_ADDR 1
-#define EEPROM_DATA_ADDR 2
-
-#define EEPROM_MAGIC 0x55
-
-// ==========================================
 // 3. ТАЙМЕРЫ (ОТСЧЁТ ВРЕМЕНИ)
 // ==========================================
-unsigned long timerDaily = 0;  // Таймер планового отчёта (~12 часов)
 unsigned long timerAlarm = 0;  // Таймер проверки аварийных условий (1 минута)
 unsigned long gsmLockTime = 0; // Защита от вечного gsmLock
 

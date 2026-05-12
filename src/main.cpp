@@ -11,7 +11,7 @@
 #include <OneWire.h>           // Шина OneWire для DS18B20
 #include <DallasTemperature.h> // Работа с цифровыми датчиками DS18B20
 #include <GyverWDT.h>          // Сторожевой пёс, охраняет от зависаний МК
-#include "config.h"
+#include "config.h"            // Номера телефонов 
 
 #define FW_VERSION "0.4.1"
 
@@ -349,32 +349,43 @@ void updateInternalClock()
       (millis() - timeSyncMillis) / 1000UL;
 
   static unsigned long lastElapsed = 0;
+  static uint16_t correctionCounter = 0;
 
   if (elapsedSeconds == lastElapsed)
     return;
 
+  // сколько секунд реально прошло
+  unsigned long delta = elapsedSeconds - lastElapsed;
   lastElapsed = elapsedSeconds;
 
-  rtcSecond++;
-
-  if (rtcSecond >= 60)
+  while (delta--)
   {
-    rtcSecond = 0;
-    rtcMinute++;
+    rtcSecond++;
 
-    if (rtcMinute >= 60)
+    // программная коррекция
+    correctionCounter++;
+
+    if (correctionCounter >= 288)
     {
-      rtcMinute = 0;
-      rtcHour++;
+      correctionCounter = 0;
+      rtcSecond++; // добавляем компенсирующую секунду
+    }
 
-      if (rtcHour >= 24)
+    if (rtcSecond >= 60)
+    {
+      rtcSecond -= 60;
+      rtcMinute++;
+
+      if (rtcMinute >= 60)
       {
-        rtcHour = 0;
+        rtcMinute = 0;
+        rtcHour++;
 
-        // Упрощённо увеличиваем день
-        rtcDay++;
-
-        // Для daily задач этого достаточно
+        if (rtcHour >= 24)
+        {
+          rtcHour = 0;
+          rtcDay++;
+        }
       }
     }
   }
@@ -565,7 +576,7 @@ void daily()
   // ======================
   // Сброс флагов
   // ======================
-  if (!(rtcHour == 8 && rtcMinute == 30))
+  if (!(rtcHour == 7 && rtcMinute == 00))
     sentMorning = false;
 
   if (!(rtcHour == 20 && rtcMinute == 0))

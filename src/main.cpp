@@ -79,6 +79,7 @@ int batPercent = -1;      // Процент батареи, извлечённы
 String signalLevel = "";  // Буфер для ответа модуля об уровне сигнала
 int signalRssi = -1;      // Уровень сигнала извлечённый из ответа
 String smsBuffer = "";    // Буфер для входящего SMS
+String currentSender = "";// Номер отправителя СМС
 String msg = "";          // Исходящее сообщение
 String gsmDateTime = "";  // Время из SIM800L
 String currentDate = "";  // Время из SIM800L 
@@ -133,7 +134,7 @@ unsigned long lastAlarmSentTime = ALARM_COOLDOWN; // Время отправки
 void daily();                                       // Отправка планового отчёта каждые ~12 часов
 void alarm();                                       // Мониторинг аварийных температур, отправка SMS + авто-звонок
 void receivingSMS();                                // Приём, парсинг и обработка входящих SMS-команд
-void sendSMS(const String &msg);                    // Отправка SMS
+void sendSMS(const String &number, const String &msg); // Отправка SMS
 bool sendATCommand(const String &command, const String &expected, unsigned long timeout, String *response = nullptr); // Отправка AT-команды с ожиданием ответа
 void clearBuffer();                                 // Полная очистка буфера программного UART
 void deleteAllSMS();                                // Удаление всех смс
@@ -174,6 +175,7 @@ void handleDeleteNumberCommand(const String &sms);
 void handleShowNumbersCommand();
 String extractPhoneNumber(const String &sms);
 bool isAdminSender(const String &smsPayload);
+String extractSenderNumber(const String &smsPayload);// Получение номера телефона отправителя
 
 void setup()
 
@@ -372,6 +374,21 @@ bool deleteWhitelistNumber(const String &number)
   return false;
 }
 
+String extractSenderNumber(const String &smsPayload)
+{
+  int senderStart = smsPayload.indexOf("\"+");
+
+  if (senderStart < 0)
+    return "";
+
+  int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
+
+  if (senderEnd < 0)
+    return "";
+
+  return smsPayload.substring(senderStart + 1, senderEnd);
+}
+
 void heartbeatLED()
 {
   if (millis() - heartbeatTimer >= 3000)
@@ -466,7 +483,7 @@ void sendBootMessage()
   msg += "\nReason: ";
   msg += resetReason;
 
-  sendSMS(msg);
+  sendSMS(PHONE_NUMBER, msg);
 }
 
 void syncInternalClock()
@@ -704,7 +721,7 @@ void daily()
     getBatLevel();
     getSignalLevel();
     constructInfoMessage();
-    sendSMS(msg);
+    sendSMS(currentSender, msg);
     deleteAllSMS();
     sentMorning = true;
     gsmUnlock();
@@ -722,7 +739,7 @@ void daily()
     getBatLevel();
     getSignalLevel();
     constructInfoMessage();
-    sendSMS(msg);
+    sendSMS(currentSender, msg);
     deleteAllSMS();
     sentEvening = true;
     gsmUnlock();
@@ -786,7 +803,7 @@ void alarm()
       lastAlarmSentTime = millis();
       getDateTime();
       constructAlarmMessage();
-      sendSMS(msg);
+      sendSMS(PHONE_NUMBER, msg);
       deleteAllSMS();
       makeCall();
       clearBuffer();
@@ -828,6 +845,7 @@ void receivingSMS()
     smsBuffer = Serial.readString(); // чтение ответа от модуля в переменную smsBuffer
     smsBuffer.replace("\r", "");     // замена символа возврат каретки
     smsBuffer.trim();                // удаляем пробелы вначале и вконце строки
+    currentSender = extractSenderNumber(smsBuffer); 
 
     if (!isWhitelistedSender(smsBuffer))
     {
@@ -845,7 +863,7 @@ void receivingSMS()
       }
       else
       {
-        sendSMS("Access denied");
+        sendSMS("Access denied", currentSender);
         deleteAllSMS();
       }
     }
@@ -857,7 +875,7 @@ void receivingSMS()
       }
       else
       {
-        sendSMS("Access denied");
+        sendSMS(currentSender, "Access denied");
         deleteAllSMS();
       }
     }
@@ -869,7 +887,7 @@ void receivingSMS()
       }
       else
       {
-        sendSMS("Access denied");
+        sendSMS(currentDate, "Access denied");
         deleteAllSMS();
       }
     }
@@ -975,18 +993,18 @@ void handleAddNumberCommand(const String &sms)
 
   if (number.length() == 0)
   {
-    sendSMS("Add failed");
+    sendSMS("Add failed", currentSender);
     gsmUnlock();
     return;
   }
 
   if (addWhitelistNumber(number))
   {
-    sendSMS("Number added:\n" + number);
+    sendSMS(currentSender, "Number added:\n" + number);
   }
   else
   {
-    sendSMS("Add failed");
+    sendSMS(currentSender, "Add failed");
   }
 
   deleteAllSMS();
@@ -1002,18 +1020,18 @@ void handleDeleteNumberCommand(const String &sms)
 
   if (number.length() == 0)
   {
-    sendSMS("Delete failed");
+    sendSMS(currentSender, "Delete failed");
     gsmUnlock();
     return;
   }
 
   if (deleteWhitelistNumber(number))
   {
-    sendSMS("Number deleted:\n" + number);
+    sendSMS(currentSender, "Number deleted:\n" + number);
   }
   else
   {
-    sendSMS("Delete failed");
+    sendSMS(currentSender, "Delete failed");
   }
 
   deleteAllSMS();
@@ -1041,7 +1059,7 @@ void handleShowNumbersCommand()
     msg += "\n";
   }
 
-  sendSMS(msg);
+  sendSMS(currentSender, msg);
 
   deleteAllSMS();
 
@@ -1057,7 +1075,7 @@ void handleInfoCommand()
   getSignalLevel();
   getDateTime();
   constructInfoMessage();
-  sendSMS(msg);
+  sendSMS(currentSender, msg);
   deleteAllSMS();
   gsmUnlock();
 }
@@ -1067,7 +1085,7 @@ void handleStartCommand()
   if (!gsmLock())
     return;
   systemWorking = true;
-  sendSMS("Start OK");
+  sendSMS(currentSender, "Start OK");
   deleteAllSMS();
   gsmUnlock();
 }
@@ -1077,7 +1095,7 @@ void handleStopCommand()
   if (!gsmLock())
     return;
   systemWorking = false;
-  sendSMS("Stop OK");
+  sendSMS(currentSender, "Stop OK");
   deleteAllSMS();
   gsmUnlock();
 }
@@ -1296,10 +1314,11 @@ void constructAlarmMessage()
   }
 }
 
-void sendSMS(const String &msg)
+void sendSMS(const String &number, const String &msg)
 {
   String smsCommand = "AT+CMGS=\"";
-  smsCommand += PHONE_NUMBER;
+
+  smsCommand += number;
   smsCommand += "\"";
 
   if (!sendATCommand(smsCommand, ">", 5000))
@@ -1308,10 +1327,13 @@ void sendSMS(const String &msg)
   }
 
   Serial.print(msg);
+
   Serial.write(26);
 
   String response = readGsmResponse(DELAY_AFTER_SMS_SEND);
-  if (response.indexOf("OK") < 0 || response.indexOf("+CMGS:") < 0)
+
+  if (response.indexOf("OK") < 0 ||
+      response.indexOf("+CMGS:") < 0)
   {
     clearBuffer();
     return;

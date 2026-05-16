@@ -709,7 +709,7 @@ void daily()
   static bool sentMorning = false;
   static bool sentEvening = false;
   // ======================
-  // 07:00
+  // 07:00 -> сброс флага ниже!!!
   // ======================
   if (rtcHour == 7 &&
       rtcMinute == 00 &&
@@ -721,13 +721,13 @@ void daily()
     getBatLevel();
     getSignalLevel();
     constructInfoMessage();
-    sendSMS(currentSender, msg);
+    sendSMS(PHONE_NUMBER, msg);
     deleteAllSMS();
     sentMorning = true;
     gsmUnlock();
   }
   // ======================
-  // 20:00
+  // 20:00 -> сброс флага ниже!!!
   // ======================
   if (rtcHour == 20 &&
       rtcMinute == 0 &&
@@ -739,7 +739,7 @@ void daily()
     getBatLevel();
     getSignalLevel();
     constructInfoMessage();
-    sendSMS(currentSender, msg);
+    sendSMS(PHONE_NUMBER, msg);
     deleteAllSMS();
     sentEvening = true;
     gsmUnlock();
@@ -993,18 +993,18 @@ void handleAddNumberCommand(const String &sms)
 
   if (number.length() == 0)
   {
-    sendSMS("Add failed", currentSender);
+    sendSMS(currentSender, "Whitelist:\nAdd failed");
     gsmUnlock();
     return;
   }
 
   if (addWhitelistNumber(number))
   {
-    sendSMS(currentSender, "Number added:\n" + number);
+    sendSMS(currentSender, "Whitelist:\nAdded " + number);
   }
   else
   {
-    sendSMS(currentSender, "Add failed");
+    sendSMS(currentSender, "Whitelist:\nAdd failed");
   }
 
   deleteAllSMS();
@@ -1020,18 +1020,18 @@ void handleDeleteNumberCommand(const String &sms)
 
   if (number.length() == 0)
   {
-    sendSMS(currentSender, "Delete failed");
+    sendSMS(currentSender, "Whitelist:\nDelete failed");
     gsmUnlock();
     return;
   }
 
   if (deleteWhitelistNumber(number))
   {
-    sendSMS(currentSender, "Number deleted:\n" + number);
+    sendSMS(currentSender, "Whitelist:\n Deleted " + number);
   }
   else
   {
-    sendSMS(currentSender, "Delete failed");
+    sendSMS(currentSender, "Whitelist:\nDelete failed");
   }
 
   deleteAllSMS();

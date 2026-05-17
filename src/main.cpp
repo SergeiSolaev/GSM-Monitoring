@@ -151,7 +151,6 @@ void getAllTemperature();                           // Опрос датчико
 bool gsmLock();                                     // SIM800 занять
 void gsmUnlock();                                   // SIM800 освободить
 bool isWhitelistedSender(const String &smsPayload); // Проверка номера отправителя смс на наличие в "белом списке"
-String readGsmResponse(unsigned long timeout);      // Чтение ответа модема в строку
 int parseBatteryPercent(const String &response);    // Извлечение процента батареи из ответа +CBC
 void getDateTime();                                 // Получение даты и времени
 bool parseDateTime(const String &response);         // Парсинг +CCLK
@@ -173,8 +172,9 @@ void setWhitelistCount(uint8_t count);
 void handleAddNumberCommand(const String &sms);
 void handleDeleteNumberCommand(const String &sms);
 void handleShowNumbersCommand();
-String extractPhoneNumber(const String &sms);
 bool isAdminSender(const String &smsPayload);
+String extractPhoneNumber(const String &sms);
+String readGsmResponse(unsigned long timeout);      // Чтение ответа модема в строку
 String extractSenderNumber(const String &smsPayload);// Получение номера телефона отправителя
 
 void setup()
@@ -914,36 +914,12 @@ void receivingSMS()
 
 bool isWhitelistedSender(const String &smsPayload)
 {
-  int senderStart = smsPayload.indexOf("\"+");
-
-  if (senderStart < 0)
-    return false;
-
-  int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
-
-  if (senderEnd < 0)
-    return false;
-
-  String sender = smsPayload.substring(senderStart + 1, senderEnd);
-
-  return whitelistContains(sender);
+  return whitelistContains(extractSenderNumber(smsPayload));
 }
 
 bool isAdminSender(const String &smsPayload)
 {
-  int senderStart = smsPayload.indexOf("\"+");
-
-  if (senderStart < 0)
-    return false;
-
-  int senderEnd = smsPayload.indexOf("\"", senderStart + 1);
-
-  if (senderEnd < 0)
-    return false;
-
-  String sender = smsPayload.substring(senderStart + 1, senderEnd);
-
-  return sender == String(PHONE_NUMBER);
+  return extractSenderNumber(smsPayload) == String(PHONE_NUMBER);
 }
 
 String extractPhoneNumber(const String &sms)

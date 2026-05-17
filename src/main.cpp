@@ -14,7 +14,7 @@
 #include <GyverWDT.h>          // Сторожевой пёс, охраняет от зависаний МК
 #include "config.h"            // Номера телефонов 
 
-#define FW_VERSION "0.4.1"
+#define FW_VERSION "0.4.2"
 
 
 // Объекты связи
@@ -863,7 +863,7 @@ void receivingSMS()
       }
       else
       {
-        sendSMS("Access denied", currentSender);
+        sendSMS(currentSender, "Access denied");
         deleteAllSMS();
       }
     }
@@ -887,7 +887,7 @@ void receivingSMS()
       }
       else
       {
-        sendSMS(currentDate, "Access denied");
+        sendSMS(currentSender, "Access denied");
         deleteAllSMS();
       }
     }

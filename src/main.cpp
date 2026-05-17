@@ -14,7 +14,7 @@
 #include <GyverWDT.h>          // Сторожевой пёс, охраняет от зависаний МК
 #include "config.h"            // Номера телефонов 
 
-#define FW_VERSION "0.4.2"
+#define FW_VERSION "0.5.0"
 
 
 // Объекты связи
@@ -40,6 +40,8 @@ DallasTemperature sensors(&oneWire); // Контроллер датчиков
 
 // Пин hearbeat LED
 #define HEARTBEAT_LED LED_BUILTIN
+#define RING_PIN 2
+#define DTR_PIN 5
 
 // Пороговые значения температур для аварийных условий
 const float TEMP_BOILER_MIN = 10.0; // Минимальная температура котла (°C)
@@ -119,6 +121,7 @@ const unsigned long CLOCK_SYNC_INTERVAL = 604800000UL; // 7 дней
 // 6. ФЛАГИ СОСТОЯНИЯ СИСТЕМЫ
 // ==========================================
 boolean systemWorking = false;                    // Разрешение работы циклов daily() и alarm()
+volatile bool ringTriggered = false;              // Поступил сигнал о звонок или СМС с пина RING SIM800L
 bool gsmBusy = false;                             // Флаг занятости SIM800
 bool boilerAlarmState = false;                    // Флаг текущей аварии котла
 bool homeAlarmState = false;                      // Флаг текущей аварии дома
@@ -177,12 +180,20 @@ bool isAdminSender(const String &smsPayload);
 void extractPhoneNumber(const String &sms);         // Извлечение номера телефона из СМС для добавления в белый список
 String readGsmResponse(unsigned long timeout);      // Чтение ответа модема в строку
 String extractSenderNumber(const String &smsPayload);// Получение номера телефона отправителя
+void ringISR();                                     // Обработчик прерывания от пина RING
+void wakeGSM();
+void sleepGSM();
 
 void setup()
 
 {
   //EEPROM.write(EEPROM_MAGIC_ADDR, 0);  // Очистка EEPROM
   Watchdog.disable();
+  // power.autoCalibrate();
+  // power.bodInSleep(true);         
+  // power.setSleepMode(POWERDOWN_SLEEP);
+  // power.correctMillis(true);
+
   detectResetReason();
 
   if (resetReason == "WATCHDOG" || resetReason == "BROWNOUT" || resetReason == "EXTERNAL RESET")
@@ -196,15 +207,23 @@ void setup()
   signalLevel.reserve(32);
   phoneNumber.reserve(16);
 
-  sensors.begin();                                // включаем датчики температуры
+  pinMode(RING_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(RING_PIN), ringISR, FALLING);
+
+  pinMode(DTR_PIN, OUTPUT);
+  digitalWrite(DTR_PIN, LOW);
+
   pinMode(HEARTBEAT_LED, OUTPUT);
   digitalWrite(HEARTBEAT_LED, LOW);
+  
+  sensors.begin();                                // включаем датчики температуры
+  
   Serial.begin(9600);                             // настройка скорости обмена данными с SIM800L
 
   sendATCommand("AT", "OK", 1000);                // установка соединения с SIM800L
   sendATCommand("AT+CMGF=1", "OK", 1000);         // включаем TextMode для SMS
   sendATCommand("AT+CNMI=1,2,0,0,0", "OK", 1000); // устанавливаем режим обработки поступившие SMS
-  sendATCommand("AT+CSCLK=0", "OK", 1000);        // отключаем возможность работы энергосбережения
+  sendATCommand("AT+CSCLK=1", "OK", 1000);        // Включаем возможность работы энергосбережения
   sendATCommand("AT+CLTS=1", "OK", 3000);         // включаем синхронизацию времени от сети
   // sendATCommand("AT&W", "OK", 3000);           // сохраняем настройки в EEPROM SIM800L. После сделать HARD RESET.
 
@@ -213,6 +232,8 @@ void setup()
   initWhitelist();
 
   sendBootMessage();
+
+  digitalWrite(DTR_PIN, HIGH);                    // Включаем энергосбережение SIM800L
 
   Watchdog.enable(RESET_MODE, WDT_TIMEOUT_8S);    // Включаем watchdog c таймаутом сброса 8 секунд
 }
@@ -230,8 +251,16 @@ void loop()
     heartbeatLED();
   }
 
+  if (ringTriggered)
+  {
+    ringTriggered = false;
+    wakeGSM();
+    receivingSMS();
+    sleepGSM();
+  }
+
   updateInternalClock();
-  receivingSMS(); 
+  // receivingSMS(); 
   daily();
 
   if (systemWorking == true)
@@ -248,6 +277,23 @@ void loop()
       gsmUnlock();
     }
   }
+}
+
+void ringISR() {
+  ringTriggered = true;
+  //power.wakeUp();
+}
+
+void wakeGSM()
+{
+  digitalWrite(DTR_PIN, LOW);
+  delay(100);
+}
+
+void sleepGSM()
+{
+  delay(100);
+  digitalWrite(DTR_PIN, HIGH);
 }
 
 void initWhitelist()
@@ -719,6 +765,7 @@ void daily()
   {
     if (!gsmLock())
       return;
+    wakeGSM();
     getAllTemperature();
     getBatLevel();
     getSignalLevel();
@@ -727,6 +774,7 @@ void daily()
     deleteAllSMS();
     sentMorning = true;
     gsmUnlock();
+    sleepGSM();
   }
   // ======================
   // 20:00 -> сброс флага ниже!!!
@@ -737,6 +785,7 @@ void daily()
   {
     if (!gsmLock())
       return;
+    wakeGSM();
     getAllTemperature();
     getBatLevel();
     getSignalLevel();
@@ -745,6 +794,7 @@ void daily()
     deleteAllSMS();
     sentEvening = true;
     gsmUnlock();
+    sleepGSM();
   }
 
   // ======================
@@ -1162,6 +1212,7 @@ void getDateTime()
 
 void getAllTemperature()
 {
+  Watchdog.reset();
   sensors.requestTemperatures();
   tAmbient = sensors.getTempCByIndex(0);
   tHome = sensors.getTempCByIndex(1);

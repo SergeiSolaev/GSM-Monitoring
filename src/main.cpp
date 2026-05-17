@@ -1264,6 +1264,9 @@ void constructInfoMessage()
     msg += " working.";
   if (!systemWorking)
     msg += " stoped";
+
+  msg += "\nFW ";
+  msg += FW_VERSION;
 }
 
 void constructAlarmMessage()

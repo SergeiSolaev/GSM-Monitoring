@@ -74,17 +74,17 @@ float tBoiler = 0.0;
 // ==========================================
 // 5. СТРОКИ И ТЕКСТЫ СООБЩЕНИЙ
 // ==========================================
-String batLevel = "";     // Буфер для ответа модуля об уровне заряда (+CBC)
-int batPercent = -1;      // Процент батареи, извлечённый из ответа +CBC
-String signalLevel = "";  // Буфер для ответа модуля об уровне сигнала
-int signalRssi = -1;      // Уровень сигнала извлечённый из ответа
-String smsBuffer = "";    // Буфер для входящего SMS
-String currentSender = "";// Номер отправителя СМС
-String msg = "";          // Исходящее сообщение
-String gsmDateTime = "";  // Время из SIM800L
-String currentDate = "";  // Время из SIM800L 
-String currentTime = "";  // Время из SIM800L
-String resetReason = "";  // Причина перезакгрузки
+String batLevel;     // Буфер для ответа модуля об уровне заряда (+CBC)
+int batPercent = -1; // Процент батареи, извлечённый из ответа +CBC
+String signalLevel;  // Буфер для ответа модуля об уровне сигнала
+int signalRssi = -1; // Уровень сигнала извлечённый из ответа
+String smsBuffer;    // Буфер для входящего SMS
+String currentSender;// Номер отправителя СМС
+String msg;          // Исходящее сообщение
+String gsmDateTime;  // Время из SIM800L
+String currentDate;  // Время из SIM800L 
+String currentTime;  // Время из SIM800L
+String resetReason;  // Причина перезакгрузки
 
 // ==========================================
 // 6. Heartbeat LED
@@ -478,7 +478,7 @@ void detectResetReason()
 
 void sendBootMessage()
 {
-  msg = "";
+  msg.remove(0);
   msg += "System rebooted";
   msg += "\nReason: ";
   msg += resetReason;
@@ -850,7 +850,7 @@ void receivingSMS()
     if (!isWhitelistedSender(smsBuffer))
     {
       deleteAllSMS();
-      smsBuffer = "";
+      smsBuffer.remove(0);
       return;
     }
 
@@ -908,7 +908,7 @@ void receivingSMS()
       // Неизвестная команда: просто очищаем память SIM800
       deleteAllSMS();
     }
-    smsBuffer = ""; // Сброс буфера после обработки
+    smsBuffer.remove(0); // Сброс буфера после обработки
   }
 }
 
@@ -1144,7 +1144,7 @@ void getBatLevel()
   }
   else
   {
-    batLevel = "";
+    batLevel.remove(0);
     batPercent = -1;
   }
   clearBuffer();
@@ -1158,7 +1158,7 @@ void getSignalLevel()
   }
   else
   {
-    signalLevel = "";
+    signalLevel.remove(0);
     signalRssi = -1;
   }
 
@@ -1198,7 +1198,7 @@ void getAllTemperature()
 
 void constructInfoMessage()
 {
-  msg = "";
+  msg.remove(0);
 
   msg += "Date ";
   msg += getFormattedDate();
@@ -1271,7 +1271,7 @@ void constructInfoMessage()
 
 void constructAlarmMessage()
 {
-  msg = "";
+  msg.remove(0);
 
   msg += "Date ";
   msg += getFormattedDate();
